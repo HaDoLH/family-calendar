@@ -10,10 +10,10 @@
    也無法列出有哪些家庭代碼。規則內容見 README.md。
    ============================================================ */
 window.FIREBASE_CONFIG = {
-  apiKey:            "TODO 貼上 apiKey",
-  authDomain:        "TODO 貼上 authDomain",
-  projectId:         "TODO 貼上 projectId",
-  storageBucket:     "TODO 貼上 storageBucket",
-  messagingSenderId: "TODO 貼上 messagingSenderId",
-  appId:             "TODO 貼上 appId"
+  apiKey:            "AIzaSyDhEO4CwitvBkc_T2YksbIKKv68HmLRR3o",
+  authDomain:        "hpschedule.firebaseapp.com",
+  projectId:         "hpschedule",
+  storageBucket:     "hpschedule.firebasestorage.app",
+  messagingSenderId: "498562850403",
+  appId:             "1:498562850403:web:55a9c60b14cdbaef26e256"
 };
