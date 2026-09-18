@@ -267,6 +267,19 @@ body{
   text-decoration:underline; text-underline-offset:3px;
 }
 
+/* 短暫提示（比 alert 溫和，而且不會擋住操作）
+   用 --ink 當底色：淺色模式是深色藥丸，深色模式自動變淺色 */
+.toast{
+  position:absolute; left:50%; transform:translateX(-50%);
+  bottom:calc(var(--tab-h) + 24px + env(safe-area-inset-bottom));
+  background:var(--ink); color:var(--surface);
+  font-size:13px; padding:9px 16px; border-radius:999px;
+  max-width:86%; text-align:center; z-index:40; box-shadow:var(--shadow);
+  animation:toastIn .18s ease;
+}
+@keyframes toastIn{from{opacity:0; transform:translate(-50%,6px)}to{opacity:1; transform:translate(-50%,0)}}
+@media (prefers-reduced-motion:reduce){.toast{animation:none}}
+
 /* 連不上雲端時的提示條 */
 .offline{
   position:absolute; left:0; right:0; bottom:calc(var(--tab-h) + env(safe-area-inset-bottom));
@@ -558,6 +571,15 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
+/** 畫面下方短暫跳一則提示 */
+function toast(msg, ms = 2800){
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  document.querySelector('.app').appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
 /* ============================================================
    色票系統
    每個顏色準備淺色／深色兩版，深色模式要提亮才看得清楚。
@@ -784,10 +806,25 @@ async function addEvent(ev){
   else { state.events.push(ev); saveLocal(); renderAll(); }
 }
 async function delEvent(id){
-  const shots = await photosOf(id);                    // 行程刪掉，照片也要跟著清掉
-  for(const p of shots) await delPhoto(p.id);
-  if(db) await db.collection('events').doc(id).delete();
-  else { state.events = state.events.filter(e => e.id !== id); saveLocal(); renderAll(); }
+  /* 先從畫面上移除，不等雲端回應。
+     原本是等 Firestore 回應後靠 onSnapshot 更新畫面，但只要網路慢、
+     或手機把頁面凍結導致連線變舊，看起來就會像「刪不掉」。
+     真的刪失敗的話，下一次 snapshot 會自動把它補回來。 */
+  const backup = state.events;
+  state.events = state.events.filter(e => e.id !== id);
+  renderCal(); renderDayPanel();
+
+  try{
+    const shots = await photosOf(id);                  // 行程刪掉，照片也要跟著清掉
+    for(const p of shots) await delPhoto(p.id);
+    if(db) await db.collection('events').doc(id).delete();
+    else saveLocal();
+  }catch(err){
+    console.error('刪除失敗', err);
+    state.events = backup;                             // 復原，不要讓畫面說謊
+    renderCal(); renderDayPanel();
+    toast('刪除沒成功，請檢查網路再試一次');
+  }
 }
 
 /* ---- 照片 ------------------------------------------------
@@ -1513,6 +1550,17 @@ function connect(conn){
     if(state.tab !== 'chat' && prev > 0 && state.chat.length > prev) $('#chatBadge').hidden = false;
   }, () => {});
 }
+
+/* 手機切到別的 App 一段時間後，系統會把網頁凍結，連線可能變舊，
+   畫面就會停在被凍結前的樣子。回到前景時主動重新對一次資料。 */
+document.addEventListener('visibilitychange', async () => {
+  if(document.visibilityState !== 'visible' || !db) return;
+  try{
+    const snap = await db.collection('events').get();
+    state.events = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    renderCal(); renderDayPanel();
+  }catch(err){ /* 對不到就算了，訂閱本身還會自己重連 */ }
+});
 
 /* ============================================================
    八、Firebase 連線 + 家庭代碼
