@@ -1,0 +1,138 @@
+# 群曆
+
+打一句話，行程就進共用行事曆。
+
+家人不用註冊任何帳號 —— 打開帶著家庭代碼的連結就能一起用。
+
+線上版：`https://hadolh.github.io/family-calendar/`
+
+---
+
+## 這是什麼
+
+| 分頁 | 做什麼 |
+|---|---|
+| **行事曆** | 月曆 + 當日行程。每個人有自己的代表色，共同行程另一個色。點行程可以加照片 |
+| **新增行程** | 打字給「小曆」，它解析出日期時間標題後排進行事曆。可一次貼好幾筆 |
+
+聽得懂的說法：
+
+- 日期 `9/15`、`9月15日`、`15號`、`今天`、`明天`、`下週三`
+- 時間 `下午3點`、`15:00`、`早上9點半`（不講就是整天）
+- 刪除 `刪除10/15`、`刪除10/15 響食天堂`、`刪除 看醫生`
+- 查詢 `這週有什麼`、`這個月有什麼`
+- 一次多筆：直接貼一整串，看到日期就切一筆
+
+---
+
+## 家庭代碼（安全機制）
+
+所有資料存在 Firestore 的 `families/<家庭代碼>/` 底下。**代碼就是鑰匙**，不知道的人打開網頁只會看到輸入框，讀不到任何資料。
+
+代碼會放進網址：`.../family-calendar/#f=<代碼>`
+
+**要邀家人，直接把這一頁的連結傳給他就好。**
+
+### 為什麼代碼要放在網址裡
+
+因為 `localStorage` 不保證留得住（無痕視窗、App 內嵌瀏覽器、清除資料都會沒）。之前在 Claude Artifact 版就踩過這個坑 —— 每開一次 App 就以為是新用戶，成員名冊長出一堆重複的「我」。代碼放連結裡就不依賴它了。
+
+---
+
+## Firebase 設定
+
+### 1. 填設定值
+
+編輯 `firebase-config.js`，貼上 Firebase Console 的 `firebaseConfig`。
+
+（這份設定會被公開，這是正常的 —— Firebase 的網頁設定值本來就設計成可公開，安全靠下面的規則。）
+
+### 2. 發布 Firestore 規則
+
+Firebase Console → Firestore Database → 規則 → 貼上以下內容 → 發布：
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 只開放「家庭代碼」底下的資料，且代碼長度必須夠
+    match /families/{code}/{doc=**} {
+      allow read, write: if code.size() >= 16;
+    }
+  }
+}
+```
+
+關鍵是**根層級和 `families/{code}` 本身都沒有規則** → 沒有人能列出有哪些家庭代碼，只能在已知代碼的情況下存取。
+
+---
+
+## 本機開發
+
+```bash
+cd 群曆
+python -m http.server 8000
+```
+
+然後開 `http://localhost:8000`。
+
+⚠️ **不能直接雙擊 index.html**。程式用 `import()` 動態載入 Firebase SDK，`file://` 協定下會被瀏覽器擋掉。
+
+---
+
+## 資料結構
+
+```
+families/<家庭代碼>/
+├── events/<id>      { date, time, title, by, byId, kind, photoCount }
+├── members/<id>     { id, name, colorKey }
+├── settings/general { sharedColorKey }
+├── chat/log         { messages: [...] }   ← 對話存成一份文件內的陣列
+└── photos/<id>      { eventId, data(base64), byId }
+```
+
+**為什麼對話不是一筆一則**：訊息會一直長，Firestore 文件數有上限，所以整包存成一個陣列（只留最近 80 則）。
+
+**為什麼照片一張一筆**：Firestore 單筆上限 1MB，全塞進行程那一筆會爆掉。
+
+**顏色不存在行程上**，而是畫面要畫的時候查色票表 → 改自己的代表色時，過去所有行程會一起變色（像 InDesign 的色票）。
+
+---
+
+## 圖示
+
+需要放進 repo 根目錄：
+
+| 檔名 | 尺寸 | 用途 |
+|---|---|---|
+| `icon-180.png` | 180×180 | iOS 加入主畫面 |
+| `icon-192.png` | 192×192 | Android / 瀏覽器分頁 |
+| `icon-512.png` | 512×512 | PWA 啟動畫面 |
+
+沒有這些檔案時 iOS 會退回用網頁截圖當圖示。
+
+---
+
+## 一次性檔案（用完請刪）
+
+- `import.html` — 把舊資料寫進 Firestore
+- `seed.json` — 搬遷用的資料
+
+跑法：本機起伺服器 → 開 `http://localhost:8000/import.html` → 輸入家庭代碼 → 匯入。
+
+---
+
+## 踩過的坑
+
+- **輸入框字級不能小於 16px** —— 否則 iOS 點下去會自動放大整頁，畫面就比螢幕寬，右邊的按鈕全被推出去
+- **橫向捲動的元件要加 `overscroll-behavior: contain`** —— iOS 上手勢滑到底會外溢去平移整個網頁
+- **`localStorage` 不保證留得住** —— 所有讀寫都包 try/catch，並且身分改成「從名冊挑人」而不是每台裝置自己產生編號
+
+---
+
+## 之後要做
+
+- [ ] 自製 App 圖示（見上面「圖示」）
+- [ ] 匯出 `.ics` 單筆到 iOS 行事曆
+- [ ] iOS 行事曆訂閱（webcal）+ 系統通知 —— 需要常駐服務產生 `.ics`，GitHub Pages 是靜態的做不到，打算用 Cloudflare Workers 讀 Firestore REST API
+- [ ] 要開放給更多人時，升級成 Google 登入 + 白名單

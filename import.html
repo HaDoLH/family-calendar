@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>群曆 — 一次性資料匯入</title>
+<style>
+  body{
+    margin:0; padding:32px 22px; background:#EEF1EF; color:#1B2422;
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    font-size:15px; line-height:1.7;
+  }
+  .box{max-width:560px; margin:0 auto; background:#fff; border-radius:16px; padding:26px}
+  h1{font-size:20px; margin:0 0 6px}
+  p{color:#5B6763; font-size:13.5px; margin:0 0 14px}
+  label{display:block; font-size:11px; letter-spacing:.14em; color:#8D9895; margin:18px 0 6px}
+  input{
+    width:100%; box-sizing:border-box; border:1px solid #DCE2DE; background:#F5F7F5;
+    font-family:ui-monospace,monospace; font-size:16px; padding:11px 13px; border-radius:8px;
+  }
+  button{
+    margin-top:18px; width:100%; border:none; background:#2F6B4F; color:#fff;
+    font:inherit; font-weight:500; padding:13px; border-radius:12px; cursor:pointer;
+  }
+  button:disabled{opacity:.5; cursor:default}
+  pre{
+    background:#F5F7F5; border-radius:8px; padding:12px; font-size:12px;
+    white-space:pre-wrap; word-break:break-all; margin:16px 0 0; max-height:320px; overflow:auto;
+  }
+  .warn{background:#F6ECDA; color:#B5761C; padding:11px 13px; border-radius:8px; font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>一次性資料匯入</h1>
+  <p>把 Claude Artifact 版的資料寫進這個家庭。<strong>只需要跑一次</strong>，跑完請把 <code>import.html</code> 和 <code>seed.json</code> 從 repo 刪掉。</p>
+
+  <div class="warn">注意：同名的資料會被覆蓋。如果這個家庭已經在用了，請先確認不會蓋掉新資料。</div>
+
+  <label for="code">家庭代碼</label>
+  <input id="code" placeholder="16 個英數字" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+  <button id="go">開始匯入</button>
+  <pre id="log" hidden></pre>
+</div>
+
+<script src="firebase-config.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const logEl = $('#log');
+function say(msg){
+  logEl.hidden = false;
+  logEl.textContent += msg + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// 網址帶 #f=xxx 或瀏覽器記過代碼的話，自動填進來
+(() => {
+  const m = location.hash.match(/[#&]f=([A-Za-z0-9]{16,40})/);
+  let v = m ? m[1] : '';
+  if(!v){ try{ v = localStorage.getItem('gunli.family') || ''; }catch(e){} }
+  if(v) $('#code').value = v;
+})();
+
+$('#go').onclick = async () => {
+  const code = $('#code').value.trim().replace(/[^A-Za-z0-9]/g, '');
+  if(code.length < 16){ say('❌ 代碼至少 16 個英數字'); return; }
+  $('#go').disabled = true;
+  logEl.textContent = '';
+
+  try{
+    say('讀取 seed.json…');
+    const seed = await (await fetch('seed.json', { cache:'no-store' })).json();
+
+    say('連線 Firebase…');
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js');
+    const { getFirestore, doc, setDoc } = await import('https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js');
+    const fs = getFirestore(initializeApp(window.FIREBASE_CONFIG));
+
+    const base = `families/${code}`;
+    let n = 0;
+    // seed.json 的結構就是「集合名 → { 文件 id: 內容 }」，照著寫進去就好
+    for(const col of ['members', 'settings', 'events', 'chat']){
+      const group = seed[col] || {};
+      for(const [id, data] of Object.entries(group)){
+        await setDoc(doc(fs, `${base}/${col}/${id}`), data);
+        say(`  ✓ ${col}/${id}`);
+        n++;
+      }
+    }
+    say(`\n完成，共寫入 ${n} 筆。`);
+    say(`現在可以打開：index.html#f=${code}`);
+    say('確認資料都在之後，請刪掉 import.html 與 seed.json。');
+  }catch(err){
+    say('❌ 失敗：' + (err && err.message ? err.message : err));
+    say('\n常見原因：');
+    say('・firebase-config.js 還沒填真正的設定值');
+    say('・Firestore 規則還沒發布（會出現 permission-denied）');
+    say('・直接雙擊開這個檔案（要用本機伺服器，例如 python -m http.server）');
+    $('#go').disabled = false;
+  }
+};
+</script>
+</body>
+</html>

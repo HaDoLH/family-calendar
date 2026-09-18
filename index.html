@@ -1,0 +1,1650 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover：iPhone 有瀏海／底部橫條時，env(safe-area-inset-*) 才有值 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>群曆</title>
+
+<!-- PWA：加入主畫面後像 App 一樣全螢幕、沒有網址列 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#EEF1EF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101413" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<!-- 加入主畫面時的預設名稱（iOS 的對話框會帶這個字） -->
+<meta name="apple-mobile-web-app-title" content="群曆">
+<!-- 主畫面圖示。檔案還沒放上去之前 iOS 會退回用網頁截圖 -->
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* 基本歸零。原本這段是 Claude Artifact 幫我們加的，搬出來要自己寫 */
+html{-webkit-text-size-adjust:100%}
+img{max-width:100%}
+[hidden]{display:none !important}
+/* ===========================================================
+   設計 Token（就像 Illustrator 的「色票 + 字級表」）
+   顏色和尺寸先定義成變數，之後要改風格只要改這一區
+   =========================================================== */
+:root{
+  --ground:#EEF1EF;        /* 最底層背景（帶一點綠味的灰，不是純灰） */
+  --surface:#FFFFFF;       /* 卡片、面板 */
+  --surface-2:#F5F7F5;     /* 次級面板：輸入列、非本月日期 */
+  --line:#DCE2DE;          /* 分隔線 */
+  --ink:#1B2422;           /* 主要文字 */
+  --ink-2:#5B6763;         /* 次要文字 */
+  --ink-3:#8D9895;         /* 最淡文字：星期標題、時間戳 */
+  --accent:#2F6B4F;        /* 介面主色（按鈕、選取狀態） */
+  --accent-ink:#FFFFFF;
+  --accent-soft:#DDEBE3;
+  --mark:#B5761C;          /* 標記色：今天 */
+  --mark-soft:#F6ECDA;
+  --shadow:0 1px 2px rgba(27,36,34,.06), 0 8px 24px rgba(27,36,34,.08);
+  --r-sm:8px; --r-md:14px; --r-lg:20px;
+  --tab-h:60px;
+}
+/* 深色模式：只換 token，元件樣式完全不用重寫。
+   兩個區塊都要寫 —— 一個給「跟隨系統」，一個給「手動切成深色」 */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#101413; --surface:#1A211F; --surface-2:#232B29;
+    --line:#2E3735; --ink:#E7EDEA; --ink-2:#A3AFAB; --ink-3:#77837F;
+    --accent:#63B78C; --accent-ink:#0E1614; --accent-soft:#25382F;
+    --mark:#E0A75E; --mark-soft:#33291A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#101413; --surface:#1A211F; --surface-2:#232B29;
+  --line:#2E3735; --ink:#E7EDEA; --ink-2:#A3AFAB; --ink-3:#77837F;
+  --accent:#63B78C; --accent-ink:#0E1614; --accent-soft:#25382F;
+  --mark:#E0A75E; --mark-soft:#33291A;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box}
+/* 手機上絕不允許橫向捲動 —— 這是上一版整個畫面被推出去的根源 */
+html,body{max-width:100%; overflow-x:hidden; overscroll-behavior:none}
+body{
+  margin:0; min-height:100dvh;
+  background:var(--ground); color:var(--ink);
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  font-size:15px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  display:flex; align-items:center; justify-content:center;
+}
+
+/* 手機外殼：手機上滿版，桌機上縮成一支手機方便預覽 */
+.app{
+  width:100%; max-width:100%;
+  height:100vh; height:100dvh;
+  background:var(--surface);
+  display:flex; flex-direction:column;
+  overflow:hidden; position:relative;
+}
+@media (min-width:520px){
+  .app{
+    max-width:430px;
+    height:min(100dvh - 40px, 880px);
+    border-radius:30px; box-shadow:var(--shadow); border:1px solid var(--line);
+  }
+}
+
+/* --- 上方標題列 --- */
+.bar{
+  flex:0 0 auto; display:flex; align-items:baseline; gap:8px;
+  padding:calc(12px + env(safe-area-inset-top)) 14px 12px;
+  border-bottom:1px solid var(--line); background:var(--surface); z-index:3;
+}
+.bar h1{
+  margin:0; font-size:17px; font-weight:700; letter-spacing:.02em;
+  flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.bar .who{
+  font-size:12px; font-weight:500; color:var(--ink-2);
+  display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
+}
+.bar .who i{width:8px; height:8px; border-radius:50%; background:var(--ink-3); display:block}
+.icon-btn{
+  border:none; background:transparent; color:var(--ink-2);
+  width:34px; height:34px; border-radius:50%; flex:0 0 auto;
+  display:grid; place-items:center; cursor:pointer; font-size:16px;
+  align-self:center;
+}
+.icon-btn:hover{background:var(--surface-2); color:var(--ink)}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+/* --- 中間可捲動區 --- */
+.screen{
+  flex:1 1 auto; overflow-y:auto; overflow-x:hidden;
+  overscroll-behavior:contain;           /* 捲到底不要把整個網頁一起帶著跑 */
+  -webkit-overflow-scrolling:touch;
+}
+.screen[hidden]{display:none}
+
+/* ===========================================================
+   行事曆分頁
+   =========================================================== */
+.cal-head{display:flex; align-items:baseline; gap:10px; padding:18px 16px 10px}
+.cal-head .month{font-family:"Noto Serif TC",serif; font-weight:600; font-size:26px; line-height:1.2; margin:0}
+.cal-head .year{font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink-3); letter-spacing:.06em}
+.cal-head .nav{margin-left:auto; display:flex; gap:0}
+
+.weekdays{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); padding:0 10px; margin-bottom:2px}
+.weekdays span{text-align:center; font-size:11px; color:var(--ink-3); letter-spacing:.1em; padding:6px 0}
+.grid{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); padding:0 10px 8px; gap:2px}
+.day{
+  position:relative; border:none; background:transparent; cursor:pointer;
+  aspect-ratio:1/1.05; border-radius:var(--r-sm);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  color:var(--ink); font-family:"IBM Plex Mono",monospace; font-size:14px; padding:0;
+  transition:background .12s ease;
+}
+.day:hover{background:var(--surface-2)}
+.day.out{color:var(--ink-3); opacity:.4}
+.day.today{color:var(--mark); font-weight:500}
+.day.today::after{
+  content:""; position:absolute; left:0; right:0; bottom:5px; margin:auto;
+  width:14px; height:1.5px; background:var(--mark);
+}
+.day.sel{background:var(--accent-soft)}
+.dots{display:flex; gap:3px; height:6px; align-items:center; justify-content:center}
+.dots i{width:6px; height:6px; border-radius:50%; display:block}
+
+/* 圖例：誰是什麼顏色 */
+.legend{
+  display:flex; flex-wrap:wrap; gap:6px 12px;
+  padding:2px 18px 14px; font-size:11.5px; color:var(--ink-2);
+}
+.legend span{display:inline-flex; align-items:center; gap:5px}
+.legend i{width:8px; height:8px; border-radius:50%; display:block}
+
+/* --- 選取日期的行程清單 --- */
+.day-panel{
+  border-top:1px solid var(--line); background:var(--surface-2);
+  padding:16px 16px calc(24px + env(safe-area-inset-bottom)); min-height:210px;
+}
+.day-panel .head{display:flex; align-items:baseline; gap:8px; margin-bottom:12px}
+.day-panel .head strong{font-size:15px; font-weight:700}
+.day-panel .head em{font-style:normal; font-size:12px; color:var(--ink-3)}
+.day-panel .head .count{margin-left:auto; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3)}
+.events{display:flex; flex-direction:column; gap:8px; list-style:none; margin:0; padding:0}
+.ev{
+  display:flex; align-items:flex-start; gap:11px;
+  background:var(--surface); border-radius:var(--r-md);
+  padding:12px 10px 12px 14px; position:relative; overflow:hidden;
+}
+/* 左側色條：用「形狀」而不是外框來表示這是一筆行程 */
+.ev::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--c)}
+.ev .time{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-2);
+  flex:0 0 42px; padding-top:2px; font-variant-numeric:tabular-nums;
+}
+.ev .body{flex:1; min-width:0}
+.ev .title{font-weight:500; word-break:break-word}
+.ev .meta{font-size:11px; color:var(--ink-3); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+.pill{
+  font-size:10px; letter-spacing:.08em; padding:1px 7px; border-radius:999px;
+  background:var(--c); color:var(--c-ink); font-weight:500;
+}
+.ev{cursor:pointer}
+.ev .del{
+  border:none; background:transparent; color:var(--ink-3); cursor:pointer;
+  font-size:14px; line-height:1; padding:5px 3px; border-radius:6px; flex:0 0 auto;
+}
+.ev .del:hover{color:var(--mark); background:var(--mark-soft)}
+.ev .shots{display:inline-flex; align-items:center; gap:3px}
+
+/* --- 行程詳情裡的照片 --- */
+.photo-grid{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px}
+.photo-grid figure{
+  margin:0; position:relative; aspect-ratio:1; border-radius:var(--r-sm);
+  overflow:hidden; background:var(--surface-2);
+}
+.photo-grid img{width:100%; height:100%; object-fit:cover; display:block; cursor:zoom-in}
+.photo-grid .x{
+  position:absolute; top:4px; right:4px; width:24px; height:24px; border-radius:50%;
+  border:none; background:rgba(0,0,0,.55); color:#fff; font-size:12px;
+  cursor:pointer; display:grid; place-items:center; line-height:1;
+}
+.addphoto{
+  display:block; text-align:center; margin-top:10px;
+  border:1px dashed var(--line); border-radius:var(--r-md);
+  padding:14px; color:var(--ink-2); font-size:13.5px; cursor:pointer;
+}
+.addphoto:hover{border-color:var(--accent); color:var(--accent)}
+.addphoto[aria-disabled="true"]{opacity:.5; cursor:default}
+.sheet .danger{
+  margin-top:10px; width:100%; border:1px solid var(--line); background:transparent;
+  color:var(--ink-3); font:inherit; padding:11px; border-radius:var(--r-md); cursor:pointer;
+}
+.sheet .danger:hover{color:var(--mark); border-color:var(--mark)}
+.detail-when{
+  font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink-2);
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 4px;
+}
+/* 放大看照片 */
+.viewer{position:absolute; inset:0; background:rgba(0,0,0,.92); display:grid; place-items:center; z-index:20; cursor:zoom-out}
+.viewer img{max-width:96%; max-height:92%; object-fit:contain; display:block}
+
+/* ===========================================================
+   家庭代碼閘門：沒有代碼就停在這一頁，什麼資料都讀不到
+   =========================================================== */
+.gate{
+  position:absolute; inset:0; z-index:30; background:var(--surface);
+  display:flex; flex-direction:column; justify-content:center;
+  padding:32px 26px calc(32px + env(safe-area-inset-bottom));
+  gap:0;
+}
+.gate[hidden]{display:none}
+.gate .mark{font-size:34px; line-height:1; margin-bottom:14px}
+.gate h2{font-family:"Noto Serif TC",serif; font-weight:600; font-size:24px; margin:0 0 6px}
+.gate p{color:var(--ink-2); font-size:13.5px; margin:0 0 22px; line-height:1.8}
+.gate label{display:block; font-size:11px; letter-spacing:.14em; color:var(--ink-3); margin-bottom:8px}
+.gate input{
+  width:100%; border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+  font-family:"IBM Plex Mono",monospace; font-size:16px; letter-spacing:.04em;
+  padding:12px 14px; border-radius:var(--r-sm);
+}
+.gate .err{color:var(--mark); font-size:12px; margin:8px 0 0}
+.gate .err[hidden]{display:none}
+.gate .primary{
+  margin-top:14px; width:100%; border:none; background:var(--accent); color:var(--accent-ink);
+  font:inherit; font-weight:500; font-size:15px; padding:13px; border-radius:var(--r-md); cursor:pointer;
+}
+.gate .divider{
+  display:flex; align-items:center; gap:12px; color:var(--ink-3);
+  font-size:11px; letter-spacing:.1em; margin:26px 0 18px;
+}
+.gate .divider::before, .gate .divider::after{
+  content:""; flex:1; height:1px; background:var(--line);
+}
+.gate .ghost{
+  width:100%; border:1px solid var(--line); background:transparent; color:var(--ink-2);
+  font:inherit; font-size:14px; padding:12px; border-radius:var(--r-md); cursor:pointer;
+}
+.gate .ghost:hover{border-color:var(--accent); color:var(--accent)}
+.gate .foot{font-size:11.5px; color:var(--ink-3); margin:22px 0 0; line-height:1.8}
+
+/* 連不上雲端時的提示條 */
+.offline{
+  position:absolute; left:0; right:0; bottom:calc(var(--tab-h) + env(safe-area-inset-bottom));
+  background:var(--mark-soft); color:var(--mark); z-index:5;
+  font-size:11.5px; text-align:center; padding:7px 14px; line-height:1.6;
+}
+.offline[hidden]{display:none}
+.empty{color:var(--ink-3); font-size:13px; text-align:center; padding:26px 10px; line-height:1.9}
+.empty code{
+  font-family:"IBM Plex Mono",monospace; background:var(--surface);
+  padding:2px 6px; border-radius:6px; color:var(--ink-2); font-size:12px;
+}
+
+/* ===========================================================
+   新增行程分頁（對話式）
+   =========================================================== */
+.chat{
+  display:flex; flex-direction:column; gap:14px;
+  padding:18px 12px 8px; min-height:100%; background:var(--surface-2);
+}
+.chat .daymark{
+  align-self:center; font-size:11px; color:var(--ink-3);
+  background:var(--surface); padding:3px 12px; border-radius:999px;
+}
+.msg{display:flex; gap:8px; max-width:86%}
+.msg.me{align-self:flex-end; flex-direction:row-reverse}
+.avatar{
+  flex:0 0 32px; width:32px; height:32px; border-radius:11px;
+  display:grid; place-items:center; font-size:13px; font-weight:700;
+}
+.msg .col{min-width:0}
+.msg .name{font-size:11px; color:var(--ink-3); margin:0 4px 3px}
+.msg.me .name{display:none}
+.bubble{
+  background:var(--surface); padding:9px 13px; border-radius:4px 16px 16px 16px;
+  word-break:break-word; white-space:pre-wrap; font-size:14.5px;
+}
+.msg.me .bubble{border-radius:16px 4px 16px 16px}
+.msg .ts{font-size:10px; color:var(--ink-3); margin:3px 4px 0}
+.msg.me .ts{text-align:right}
+
+/* 機器人回覆的「已加入行事曆」卡片 */
+.card{
+  background:var(--surface); border-radius:4px 16px 16px 16px;
+  padding:12px 14px; border:1px solid var(--line); min-width:190px;
+}
+.card .ok{
+  font-size:11px; letter-spacing:.08em; color:var(--c);
+  display:flex; align-items:center; gap:6px; margin-bottom:8px; flex-wrap:wrap;
+}
+.card .when{font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink-2); font-variant-numeric:tabular-nums}
+.card .what{font-size:17px; font-weight:700; margin-top:2px; word-break:break-word}
+/* 一次加好幾筆時，改用條列 */
+.card .list{display:flex; flex-direction:column; gap:9px}
+.card .row{display:flex; gap:10px; align-items:baseline}
+.card .row .w{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3);
+  flex:0 0 auto; white-space:nowrap; font-variant-numeric:tabular-nums;
+}
+.card .row .n{font-size:14.5px; font-weight:500; word-break:break-word; min-width:0}
+.card .miss{
+  margin-top:10px; padding-top:9px; border-top:1px solid var(--line);
+  font-size:12px; color:var(--ink-3); line-height:1.7;
+}
+.card .goto{
+  margin-top:10px; width:100%; border:1px solid var(--line); background:transparent;
+  color:var(--c); font:inherit; font-size:12.5px; padding:7px; border-radius:var(--r-sm); cursor:pointer;
+}
+.card .goto:hover{background:var(--surface-2)}
+
+/* --- 輸入區 --- */
+.composer{
+  flex:0 0 auto; border-top:1px solid var(--line); background:var(--surface);
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+}
+/* 個人／共同 切換鈕 */
+.seg{display:flex; gap:6px; margin-bottom:9px}
+.seg button{
+  flex:0 0 auto; display:inline-flex; align-items:center; gap:6px;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink-3);
+  font:inherit; font-size:12.5px; padding:5px 13px 5px 10px; border-radius:999px; cursor:pointer;
+}
+.seg button i{width:9px; height:9px; border-radius:50%; background:var(--c); display:block; opacity:.35}
+.seg button[aria-pressed="true"]{color:var(--ink); border-color:var(--c); background:var(--surface)}
+.seg button[aria-pressed="true"] i{opacity:1}
+.seg .hint{
+  margin-left:auto; align-self:center; font-size:11px; color:var(--ink-3);
+  border:none; background:transparent; padding:0; cursor:pointer;
+}
+/* 快捷句：改成折行，不再橫向捲動（橫向捲動的手勢會把整個網頁帶著跑） */
+.chips{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:9px}
+.chip{
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+  font:inherit; font-size:12px; padding:5px 11px; border-radius:999px; cursor:pointer;
+}
+.chip:hover{border-color:var(--accent); color:var(--accent)}
+.input-row{display:flex; gap:8px; align-items:flex-end}
+.input-row textarea{
+  flex:1; min-width:0; border:1px solid var(--line); background:var(--surface-2);
+  color:var(--ink); font:inherit; line-height:1.5;
+  /* 16px 是 iOS 的底線：小於 16px 的輸入框被點到時，Safari 會自動把整頁放大，
+     畫面就會比螢幕寬、右邊的東西全被推出去。這是上一版版面跑掉的原因。 */
+  font-size:16px;
+  padding:10px 14px; border-radius:20px;
+  resize:none; max-height:130px; overflow-y:auto; overscroll-behavior:contain;
+}
+.input-row textarea::placeholder{color:var(--ink-3)}
+.send{
+  flex:0 0 auto; width:42px; height:42px; border-radius:50%; border:none;
+  background:var(--c); color:var(--c-ink); cursor:pointer; font-size:16px;
+  display:grid; place-items:center;
+}
+.send:disabled{opacity:.35; cursor:default}
+
+/* ===========================================================
+   底部分頁列
+   =========================================================== */
+.tabs{
+  flex:0 0 auto; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  border-top:1px solid var(--line); background:var(--surface);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.tab{
+  border:none; background:transparent; cursor:pointer; height:var(--tab-h);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  color:var(--ink-3); font:inherit; font-size:11px; letter-spacing:.05em; position:relative;
+}
+.tab .ico{font-size:18px; line-height:1}
+.tab[aria-selected="true"]{color:var(--accent)}
+.tab .badge{
+  position:absolute; top:9px; right:calc(50% - 26px);
+  min-width:16px; height:16px; padding:0 4px; border-radius:999px;
+  background:var(--mark); color:#fff; font-size:10px;
+  display:grid; place-items:center; font-family:"IBM Plex Mono",monospace;
+}
+.tab .badge[hidden]{display:none}
+
+/* ===========================================================
+   設定 / 說明面板
+   =========================================================== */
+.sheet-bg{position:absolute; inset:0; background:rgba(16,20,19,.5); display:flex; align-items:flex-end; z-index:10}
+.sheet{
+  background:var(--surface); width:100%; max-height:88%; overflow-y:auto;
+  overscroll-behavior:contain;
+  border-radius:var(--r-lg) var(--r-lg) 0 0;
+  padding:20px 18px calc(24px + env(safe-area-inset-bottom));
+  animation:up .22s ease;
+}
+@keyframes up{from{transform:translateY(14px);opacity:.4}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.sheet{animation:none}}
+.sheet h2{font-family:"Noto Serif TC",serif; font-weight:600; font-size:19px; margin:0 0 4px}
+.sheet h3{font-size:11px; letter-spacing:.14em; color:var(--ink-3); margin:22px 0 9px; font-weight:500}
+.sheet p{margin:0 0 10px; color:var(--ink-2); font-size:13.5px}
+.sheet .note{font-size:11.5px; color:var(--ink-3); margin:7px 0 0}
+.sheet ul{margin:0; padding-left:17px; color:var(--ink-2); font-size:13.5px}
+.sheet li{margin-bottom:7px}
+.sheet code{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--surface-2); padding:2px 6px; border-radius:6px; color:var(--ink)}
+.sheet input[type=text]{
+  width:100%; border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+  font:inherit; font-size:16px;             /* 同上：不能小於 16px，否則 iOS 會放大整頁 */
+  padding:10px 13px; border-radius:var(--r-sm);
+}
+/* 「你是誰」的身分選擇 */
+.who-pick{display:flex; flex-wrap:wrap; gap:7px}
+.who-pick button{
+  display:inline-flex; align-items:center; gap:6px;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+  font:inherit; font-size:13.5px; padding:7px 13px; border-radius:999px; cursor:pointer;
+}
+.who-pick button i{width:9px; height:9px; border-radius:50%; display:block}
+.who-pick button[aria-pressed="true"]{background:var(--surface); color:var(--ink); border-color:var(--ink-3); font-weight:500}
+.members .rm{
+  margin-left:auto; border:none; background:transparent; color:var(--ink-3);
+  cursor:pointer; font-size:13px; padding:3px 6px; border-radius:6px;
+}
+.members .rm:hover{color:var(--mark); background:var(--mark-soft)}
+.swatches{display:flex; flex-wrap:wrap; gap:10px}
+.sw{
+  width:32px; height:32px; border-radius:50%; border:none; cursor:pointer;
+  background:var(--c); padding:0; position:relative;
+}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--c)}
+.sw[aria-pressed="true"]::after{content:"✓"; color:#fff; font-size:14px; position:absolute; inset:0; display:grid; place-items:center; text-shadow:0 1px 2px rgba(0,0,0,.4)}
+.members{display:flex; flex-direction:column; gap:8px; font-size:13.5px; color:var(--ink-2)}
+.members span{display:flex; align-items:center; gap:8px}
+.members i{width:10px; height:10px; border-radius:50%; display:block}
+.sheet .save{
+  margin-top:24px; width:100%; border:none; background:var(--accent); color:var(--accent-ink);
+  font:inherit; font-weight:500; padding:13px; border-radius:var(--r-md); cursor:pointer;
+}
+.status{font-size:11.5px; color:var(--ink-3); display:flex; align-items:center; gap:6px; margin-top:10px}
+.status i{width:6px; height:6px; border-radius:50%; background:var(--accent); display:block}
+.status.off i{background:var(--ink-3)}
+</style>
+</head>
+<body>
+
+<!-- Firebase 設定。這一行要放在主程式之前 -->
+<script src="firebase-config.js"></script>
+
+<div class="app">
+  <header class="bar">
+    <h1 id="barTitle">共用行事曆</h1>
+    <span class="who" id="barWho" hidden><i></i><b></b></span>
+    <button class="icon-btn" id="btnInfo" title="設定與說明" aria-label="設定與說明">☰</button>
+  </header>
+
+  <!-- ① 行事曆 -->
+  <main class="screen" id="scCal">
+    <div class="cal-head">
+      <h2 class="month" id="calMonth">九月</h2>
+      <span class="year" id="calYear">2026</span>
+      <span class="nav">
+        <button class="icon-btn" id="prevM" aria-label="上個月">‹</button>
+        <button class="icon-btn" id="todayBtn" aria-label="回到今天">•</button>
+        <button class="icon-btn" id="nextM" aria-label="下個月">›</button>
+      </span>
+    </div>
+    <div class="weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+    <div class="grid" id="calGrid"></div>
+    <div class="legend" id="legend"></div>
+    <section class="day-panel">
+      <div class="head">
+        <strong id="dpDate">9月8日</strong><em id="dpWeek">週二</em>
+        <span class="count" id="dpCount"></span>
+      </div>
+      <ul class="events" id="dpList"></ul>
+    </section>
+  </main>
+
+  <!-- ② 新增行程 -->
+  <main class="screen" id="scChat" hidden>
+    <div class="chat" id="chatList"></div>
+  </main>
+  <div class="composer" id="composer" hidden>
+    <div class="seg" id="seg">
+      <button type="button" data-kind="personal" aria-pressed="true"><i></i>個人</button>
+      <button type="button" data-kind="shared" aria-pressed="false"><i></i>共同</button>
+      <button type="button" class="hint" id="segHint">這是什麼？</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="input-row">
+      <textarea id="msgInput" rows="1" placeholder="打一句話，例如：9/15 看醫生（可以一次貼好幾筆）"></textarea>
+      <button class="send" id="sendBtn" aria-label="送出">➤</button>
+    </div>
+  </div>
+
+  <div class="offline" id="offline" hidden>連不上雲端，目前是本機模式 —— 這台裝置改的東西家人看不到。</div>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" id="tabCal" role="tab" aria-selected="true"><span class="ico">▤</span>行事曆</button>
+    <button class="tab" id="tabChat" role="tab" aria-selected="false"><span class="ico">＋</span>新增行程<span class="badge" id="chatBadge" hidden>1</span></button>
+  </nav>
+
+  <!-- 家庭代碼閘門。預設顯示，確認有代碼之後才收起來 -->
+  <section class="gate" id="gate">
+    <div class="mark">🗓️</div>
+    <h2>群曆</h2>
+    <p>打一句話，行程就進共用行事曆。<br>要先有家庭代碼才能看到內容。</p>
+
+    <label for="gateIn">家庭代碼</label>
+    <input type="text" id="gateIn" placeholder="家人給你的那串英數字" autocomplete="off"
+           autocapitalize="off" spellcheck="false" inputmode="latin">
+    <p class="err" id="gateErr" hidden>代碼至少 16 個英數字，再檢查一次。</p>
+    <button class="primary" id="gateJoin">加入</button>
+
+    <div class="divider">或</div>
+    <button class="ghost" id="gateNew">建立一個新家庭</button>
+
+    <p class="foot">代碼會存在這台裝置，也會放進網址列 —— 要邀家人，<strong>直接把這一頁的連結傳給他</strong>就好，他點開就能用，不用註冊任何帳號。</p>
+  </section>
+</div>
+
+<script>
+/* ============================================================
+   群曆 — 打一句話，行程就進共用行事曆
+
+   資料流：文字 → parse() 解析日期時間標題 → 寫進資料庫 → 月曆重畫
+   ============================================================ */
+
+const $ = s => document.querySelector(s);
+const WEEK_TXT = ['日','一','二','三','四','五','六'];
+const MONTH_TXT = ['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'];
+const pad = n => String(n).padStart(2,'0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const fromYmd = s => { const [y,m,dd] = s.split('-').map(Number); return new Date(y, m-1, dd); };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const TODAY = new Date(); TODAY.setHours(0,0,0,0);
+
+/* ============================================================
+   色票系統
+   每個顏色準備淺色／深色兩版，深色模式要提亮才看得清楚。
+   重點：顏色「不」存進每一筆行程，而是畫面要畫的時候才查表 ——
+   就像 InDesign 的色票，改色票所有套用的物件會一起變。
+   ============================================================ */
+const PALETTE = {
+  pine  :{name:'松綠', light:'#2F6B4F', dark:'#63B78C'},
+  indigo:{name:'靛藍', light:'#3A5F8F', dark:'#7FA6DC'},
+  ochre :{name:'赭橘', light:'#B5761C', dark:'#E0A75E'},
+  brick :{name:'磚紅', light:'#A8484A', dark:'#E08587'},
+  plum  :{name:'紫',   light:'#6B5490', dark:'#AE95D8'},
+  teal  :{name:'青',   light:'#2E7D82', dark:'#5FC0C5'},
+  rose  :{name:'粉',   light:'#B5647A', dark:'#E293AA'},
+  stone :{name:'灰褐', light:'#6E6A60', dark:'#AFA99C'}
+};
+const COLOR_KEYS = Object.keys(PALETTE);
+
+function isDark(){
+  const attr = document.documentElement.getAttribute('data-theme');
+  if(attr === 'dark') return true;
+  if(attr === 'light') return false;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+/** 色票代號 → 目前主題該用的 hex */
+function hexOf(key){
+  const c = PALETTE[key] || PALETTE.stone;
+  return isDark() ? c.dark : c.light;
+}
+/** 這個底色上該放黑字還是白字（用亮度判斷，跟印刷選反白同個道理） */
+function inkOn(hex){
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.299*(n>>16 & 255) + 0.587*(n>>8 & 255) + 0.114*(n & 255)) / 255;
+  return lum > 0.62 ? '#141A18' : '#FFFFFF';
+}
+
+/* ============================================================
+   應用狀態
+   ============================================================ */
+// Firebase 設定放在 firebase-config.js（同一份設定 import.html 也會用到）
+const FIREBASE_CONFIG = window.FIREBASE_CONFIG || {};
+
+const LS = { meId:'gunli.meId', kind:'gunli.kind', local:'gunli.local.v2', family:'gunli.family' };
+
+/* 瀏覽器的 localStorage 不保證存得住（無痕視窗、App 內嵌瀏覽器、清除資料都會沒），
+   所以包一層安全存取，讀不到就當作沒有，不讓整支程式當掉。 */
+const store = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+};
+
+const state = {
+  events: [],    // [{id, date, time, title, by, byId, kind, photoCount}]
+  chat:   [],    // [{id, role:'me'|'peer'|'bot', name, byId, text, card?, ts}]
+  photos: [],    // 只有本機模式用；雲端模式的照片是要看的時候才去查
+  members:{},    // { [id]: {id, name, colorKey} }
+  shared: 'ochre',                 // 共同行程的色票代號
+  meId:   store.get(LS.meId) || '',   // 空字串 = 還沒選自己是誰
+  kind:   store.get(LS.kind) || 'personal',
+  view:   new Date(TODAY.getFullYear(), TODAY.getMonth(), 1),
+  sel:    ymd(TODAY),
+  tab:    'cal',
+  online: false
+};
+
+/* 成員是一份「全家共用的名冊」，每台裝置只是記住「我是名冊上的哪一位」。
+   這樣就算瀏覽器把記錄清掉，重新選一次即可，不會每次都多長出一個新成員。 */
+function me(){
+  return state.members[state.meId] || { id:'', name:'尚未選擇', colorKey:'stone' };
+}
+const hasIdentity = () => !!state.members[state.meId];
+
+/** 一筆行程該用什麼顏色 */
+function colorKeyOf(ev){
+  if(!ev || ev.kind === 'shared' || !ev.kind) return state.shared;   // 舊資料沒 kind 就當共同
+  const m = state.members[ev.byId];
+  return (m && m.colorKey) || (ev.byId === state.meId ? me().colorKey : state.shared);
+}
+const colorOf = ev => hexOf(colorKeyOf(ev));
+
+/* ============================================================
+   一、解析引擎：把一句中文變成一筆行程
+   （這一整區之後接真 LINE 時可以原封不動搬過去）
+   ============================================================ */
+function parseDate(text){
+  let t = text, date = null;
+  const y = TODAY.getFullYear();
+  const mk = (m, d) => {
+    let dt = new Date(y, m-1, d);
+    if(isNaN(dt) || dt.getMonth() !== m-1) return null;      // 擋掉 2/31 這種不存在的日期
+    if((TODAY - dt) / 86400000 > 60) dt = new Date(y+1, m-1, d);  // 已過太久 → 視為明年
+    return ymd(dt);
+  };
+  const shift = n => { const dt = new Date(TODAY); dt.setDate(dt.getDate()+n); return ymd(dt); };
+
+  let m;
+  if((m = t.match(/(\d{1,2})\s*[\/\-]\s*(\d{1,2})/))){
+    date = mk(+m[1], +m[2]); t = t.replace(m[0], ' ');
+  } else if((m = t.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日號]?/))){
+    date = mk(+m[1], +m[2]); t = t.replace(m[0], ' ');
+  } else if((m = t.match(/(今天|今日|明天|明日|後天|大後天)/))){
+    date = shift({'今天':0,'今日':0,'明天':1,'明日':1,'後天':2,'大後天':3}[m[1]]);
+    t = t.replace(m[0], ' ');
+  } else if((m = t.match(/(下下|下|這|本)?\s*(?:週|周|星期|禮拜)\s*([一二三四五六日天])/))){
+    const map = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'日':0,'天':0};
+    let delta = (map[m[2]] - TODAY.getDay() + 7) % 7;
+    if(m[1] === '下') delta += 7;
+    else if(m[1] === '下下') delta += 14;
+    else if(!m[1] && delta === 0) delta = 7;                  // 單講「週三」而今天正是週三 → 下週
+    date = shift(delta); t = t.replace(m[0], ' ');
+  } else if((m = t.match(/(\d{1,2})\s*[日號]/))){
+    date = mk(TODAY.getMonth()+1, +m[1]); t = t.replace(m[0], ' ');
+  }
+  return { date, rest:t };
+}
+
+function parseTime(text){
+  let t = text, time = '';
+  // 一定要有「點」或「:」才算時間，避免把日期數字吃掉
+  const m = t.match(/(凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*(\d{1,2})\s*(?::|：|點|時)\s*(半|\d{1,2})?\s*分?/);
+  if(m){
+    let h = +m[2];
+    const period = m[1];
+    const mi = m[3] === '半' ? 30 : (m[3] ? +m[3] : 0);
+    if(/下午|傍晚|晚上/.test(period) && h < 12) h += 12;
+    if(period === '中午' && h < 12) h = 12;
+    if(period === '凌晨' && h === 12) h = 0;
+    if(h <= 23 && mi <= 59){ time = `${pad(h)}:${pad(mi)}`; t = t.replace(m[0], ' '); }
+  }
+  return { time, rest:t };
+}
+
+function parse(raw){
+  const text = raw.trim();
+  if(/(有什麼|有哪些|有沒有|看一下|查一下|查詢)/.test(text) && !/^(新增|加|幫我加|記)/.test(text)){
+    return { type:'query', range: /(這個月|本月|這月)/.test(text) ? 'month' : 'week' };
+  }
+  if(/^(刪除|取消|移除|拿掉|不用)/.test(text)){
+    let rest = text.replace(/^(刪除|取消|移除|拿掉|不用)\s*/, '');
+    const all = /(全部|都刪|所有)/.test(rest);
+    rest = rest.replace(/(全部|都刪|所有|了|吧|喔|啦|的行程|行程)/g, ' ');
+    // 刪除也要能認日期 —— 「刪除10/15」指的是那一天，不是標題裡有「10/15」
+    const d = parseDate(rest);
+    const keyword = d.rest
+      .replace(/[（(]\s*[一二三四五六日天]\s*[）)]/g,' ')
+      .replace(/\s+/g,' ').trim();
+    return { type:'delete', date:d.date, keyword, all };
+  }
+  const d = parseDate(text);
+  const tm = parseTime(d.rest);
+  const title = tm.rest
+    .replace(/^(幫我|請)?\s*(新增|加入|加上|加|記一下|記下|排)\s*/,'')
+    .replace(/[（(]\s*[一二三四五六日天]\s*[）)]/g,' ')   // 去掉行事曆常見的「（五）」星期註記
+    .replace(/[，,。！!、~～]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+  return { type:'add', date:d.date, time:tm.time, title };
+}
+
+/* ---- 一次貼一整串，自動拆成好幾筆 ----------------------------
+   原理：先找出這段文字裡「所有」日期出現的位置，
+   每個日期就是一筆新行程的起點，從那裡切開。
+   （像排版時看到每個「段落標記」就分一段，日期就是這裡的段落標記） */
+const DATE_TOKEN = new RegExp(
+  '(\\d{1,2}\\s*[\\/\\-]\\s*\\d{1,2})' +                                  // ① 9/15、9-15
+  '|(\\d{1,2}\\s*月\\s*\\d{1,2}\\s*[日號]?)' +                             // ② 9月15日
+  '|(今天|今日|明天|明日|後天|大後天)' +                                    // ③
+  '|((?:下下|下|這|本)?\\s*(?:週|周|星期|禮拜)\\s*[一二三四五六日天])' +      // ④ 下週三（弱）
+  '|(\\d{1,2}\\s*[日號])'                                                  // ⑤ 15號（弱）
+, 'g');
+
+/* ④⑤ 太容易誤中（例如「開會在3號會議室」的「3號」、標題裡的「週報」），
+   所以只有在前面是空白或標點時，才把它當成新一筆的起點。 */
+const isWeak = h => !!(h[4] || h[5]);
+const atBoundary = (line, i) => i === 0 || /[\s、，,。;；)）]/.test(line[i-1]);
+
+function splitCommands(raw){
+  // 先用換行、分號、「還有」「然後」這種明確的分隔切開
+  const lines = raw.split(/[\n;；]+|\s+(?:還有|然後|接著)\s+/)
+                   .map(s => s.trim()).filter(Boolean);
+  const out = [];
+  for(const line of lines){
+    const hits = [...line.matchAll(DATE_TOKEN)]
+      .filter(h => !isWeak(h) || atBoundary(line, h.index));
+    if(hits.length <= 1){ out.push(line); continue; }   // 只有一個日期就不用拆
+    for(let i = 0; i < hits.length; i++){
+      const start = hits[i].index;
+      const end = (i + 1 < hits.length) ? hits[i+1].index : line.length;
+      // 第一個日期前面的字（例如「幫我加」）併進第一段，順序才不會亂
+      const head = (i === 0 && start > 0) ? line.slice(0, start).trim() + ' ' : '';
+      const seg = (head + line.slice(start, end)).trim();
+      if(seg) out.push(seg);
+    }
+  }
+  return out;
+}
+
+/* ============================================================
+   二、資料層：優先用雲端資料庫，連不上就退回本機
+   ============================================================ */
+let db = null;
+
+function saveLocal(){
+  try{
+    localStorage.setItem(LS.local, JSON.stringify({
+      events:state.events, chat:state.chat, members:state.members,
+      shared:state.shared, photos:state.photos
+    }));
+  }catch(e){}
+}
+function loadLocal(){
+  try{
+    const o = JSON.parse(localStorage.getItem(LS.local) || 'null');
+    if(o){
+      state.events = o.events || []; state.chat = o.chat || [];
+      state.members = o.members || {}; state.shared = o.shared || state.shared;
+      state.photos = o.photos || [];
+    }
+  }catch(e){}
+}
+
+async function addEvent(ev){
+  if(db) await db.collection('events').doc(ev.id).set(ev);
+  else { state.events.push(ev); saveLocal(); renderAll(); }
+}
+async function delEvent(id){
+  const shots = await photosOf(id);                    // 行程刪掉，照片也要跟著清掉
+  for(const p of shots) await delPhoto(p.id);
+  if(db) await db.collection('events').doc(id).delete();
+  else { state.events = state.events.filter(e => e.id !== id); saveLocal(); renderAll(); }
+}
+
+/* ---- 照片 ------------------------------------------------
+   這個環境沒有檔案空間，照片只能存進資料庫，而資料庫「單筆上限 256KB」，
+   所以一定要先在手機上壓縮再上傳（一張一筆，不要全塞進行程那一筆）。 */
+const PHOTO_MAX_CHARS = 700000;      // 壓完的字串長度上限，留安全空間給 Firestore 的 1MB
+
+/** 把使用者選的照片縮小、轉成 JPEG。太大就再降一級，最多試三輪。 */
+async function shrink(file){
+  let bmp;
+  try{
+    bmp = await createImageBitmap(file, { imageOrientation:'from-image' });
+  }catch(e){
+    // 舊版 Safari 沒有上面那個選項，改用傳統做法
+    bmp = await new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  const steps = [[1200, 0.75], [900, 0.68], [700, 0.6]];
+  for(const [maxPx, q] of steps){
+    const scale = Math.min(1, maxPx / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width  = Math.round(bmp.width  * scale);
+    cv.height = Math.round(bmp.height * scale);
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff';                       // 透明底補白，JPEG 沒有透明色
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+    const url = cv.toDataURL('image/jpeg', q);
+    if(url.length <= PHOTO_MAX_CHARS) return url;
+  }
+  return null;                                    // 三輪都還太大就放棄
+}
+
+/** 取某筆行程的照片。只在打開詳情時才讀，不要一次把所有照片載進記憶體 */
+async function photosOf(eventId){
+  if(!db) return state.photos.filter(p => p.eventId === eventId);
+  const snap = await db.collection('photos').where('eventId', '==', eventId).get();
+  return snap.docs.map(d => ({ id:d.id, ...d.data() }));
+}
+async function addPhoto(eventId, dataUrl){
+  const doc = { id:uid(), eventId, data:dataUrl, byId:state.meId, createdAt:Date.now() };
+  if(db) await db.collection('photos').doc(doc.id).set(doc);
+  else { state.photos.push(doc); saveLocal(); }
+  return doc;
+}
+async function delPhoto(id){
+  if(db) await db.collection('photos').doc(id).delete();
+  else { state.photos = state.photos.filter(p => p.id !== id); saveLocal(); }
+}
+/** 把張數寫回行程，清單上才顯示得出來。用實際查到的數量覆蓋，不做加減，避免多人同時改時算錯 */
+async function syncPhotoCount(eventId){
+  const n = (await photosOf(eventId)).length;
+  if(db) await db.collection('events').doc(eventId).update({ photoCount:n });
+  else {
+    const e = state.events.find(x => x.id === eventId);
+    if(e) e.photoCount = n;
+    saveLocal(); renderAll();
+  }
+  return n;
+}
+/** 對話存成「一份文件內含一個陣列」，避免每則訊息都占一份文件 */
+async function pushChat(msg){
+  const next = [...state.chat, msg].slice(-80);
+  if(db) await db.doc('chat/log').set({ messages: next });
+  else { state.chat = next; saveLocal(); renderChat(); }
+}
+/** 建立或更新一位成員，並把「我」指向他。id 傳空字串就是新增一位。 */
+async function saveMember(id, name, colorKey){
+  const memberId = id || ('u' + uid());
+  const doc = { id:memberId, name, colorKey, updatedAt:Date.now() };
+  state.members = { ...state.members, [memberId]: doc };
+  state.meId = memberId;
+  store.set(LS.meId, memberId);
+  if(db) await db.collection('members').doc(memberId).set(doc);
+  else saveLocal();
+}
+/** 切換成名冊上的另一位（不新增資料） */
+function switchTo(id){
+  state.meId = id;
+  store.set(LS.meId, id);
+}
+async function removeMember(id){
+  const next = { ...state.members }; delete next[id];
+  state.members = next;
+  if(state.meId === id){ state.meId = ''; store.set(LS.meId, ''); }
+  if(db) await db.collection('members').doc(id).delete();
+  else saveLocal();
+}
+async function saveSharedColor(colorKey){
+  state.shared = colorKey;
+  if(db) await db.doc('settings/general').set({ sharedColorKey:colorKey });
+  else saveLocal();
+}
+
+/* ============================================================
+   三、畫面繪製
+   ============================================================ */
+function eventsOn(dateStr){
+  return state.events
+    .filter(e => e.date === dateStr)
+    .sort((a,b) => (a.time||'99').localeCompare(b.time||'99'));
+}
+
+function renderCal(){
+  const y = state.view.getFullYear(), m = state.view.getMonth();
+  $('#calMonth').textContent = MONTH_TXT[m];
+  $('#calYear').textContent = y;
+
+  const first = new Date(y, m, 1);
+  const start = new Date(first);
+  start.setDate(1 - first.getDay());                 // 往前補到週日
+  const todayStr = ymd(TODAY);
+
+  let html = '';
+  for(let i = 0; i < 42; i++){
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const s = ymd(d);
+    const cls = ['day',
+      d.getMonth() !== m ? 'out' : '',
+      s === todayStr ? 'today' : '',
+      s === state.sel ? 'sel' : ''].filter(Boolean).join(' ');
+    const dots = eventsOn(s).slice(0,3)
+      .map(e => `<i style="background:${colorOf(e)}"></i>`).join('');
+    html += `<button class="${cls}" data-d="${s}"><span>${d.getDate()}</span><span class="dots">${dots}</span></button>`;
+  }
+  $('#calGrid').innerHTML = html;
+
+  // 圖例：共同 + 目前有登記的成員
+  const people = Object.values(state.members).sort((a,b) => a.name.localeCompare(b.name,'zh-Hant'));
+  $('#legend').innerHTML =
+    `<span><i style="background:${hexOf(state.shared)}"></i>共同行程</span>` +
+    people.map(p => `<span><i style="background:${hexOf(p.colorKey)}"></i>${esc(p.name)}${p.id === state.meId ? '（你）' : ''}</span>`).join('');
+}
+
+function renderDayPanel(){
+  const d = fromYmd(state.sel);
+  $('#dpDate').textContent = `${d.getMonth()+1}月${d.getDate()}日`;
+  $('#dpWeek').textContent = `週${WEEK_TXT[d.getDay()]}` + (state.sel === ymd(TODAY) ? '・今天' : '');
+  const list = eventsOn(state.sel);
+  $('#dpCount').textContent = list.length ? `${list.length} 筆` : '';
+
+  $('#dpList').innerHTML = list.length ? list.map(e => {
+    const c = colorOf(e);
+    const shared = !e.kind || e.kind === 'shared';
+    const owner = (state.members[e.byId] || {}).name || e.by || '';
+    return `<li class="ev" style="--c:${c}; --c-ink:${inkOn(c)}" data-open="${e.id}" role="button" tabindex="0">
+      <span class="time">${e.time || '整天'}</span>
+      <span class="body">
+        <span class="title">${esc(e.title)}</span>
+        <span class="meta">
+          ${shared ? '<span class="pill">共同</span>' : ''}
+          ${owner ? esc(owner) + ' 新增' : ''}
+          ${e.photoCount ? `<span class="shots">🖼 ${e.photoCount}</span>` : ''}
+        </span>
+      </span>
+      <button class="del" data-del="${e.id}" aria-label="刪除 ${esc(e.title)}">✕</button>
+    </li>`;
+  }).join('')
+  : `<li class="empty">這天還沒有安排。<br>到<strong>新增行程</strong>頁打一句 <code>9/15 看醫生</code> 試試看。</li>`;
+}
+
+function renderChat(){
+  const box = $('#chatList');
+  let lastDay = '';
+  box.innerHTML = state.chat.map(msg => {
+    const t = new Date(msg.ts);
+    const dayKey = ymd(t);
+    let mark = '';
+    if(dayKey !== lastDay){
+      lastDay = dayKey;
+      mark = `<div class="daymark">${t.getMonth()+1}月${t.getDate()}日 週${WEEK_TXT[t.getDay()]}</div>`;
+    }
+    const mine = msg.role === 'me' || (msg.byId && msg.byId === state.meId);
+    const author = state.members[msg.byId];
+    const who = author ? author.name : (msg.name || '？');
+    const c = msg.role === 'bot' ? hexOf('ochre')
+            : hexOf(author ? author.colorKey : (mine ? me().colorKey : 'stone'));
+    const time = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
+
+    let body;
+    if(msg.card){
+      const cc = hexOf(msg.card.colorKey || state.shared);
+      // items 是新格式（可能好幾筆）；舊訊息只有 when / title，補成一筆
+      const items = msg.card.items || [{ when:msg.card.when, title:msg.card.title }];
+      const miss = msg.card.miss || [];
+      const detail = items.length === 1
+        ? `<div class="when">${esc(items[0].when)}</div>
+           <div class="what">${esc(items[0].title)}</div>`
+        : `<div class="list">${items.map(it =>
+             `<div class="row"><span class="w">${esc(it.short || it.when)}</span><span class="n">${esc(it.title)}</span></div>`
+           ).join('')}</div>`;
+      body = `<div class="card" style="--c:${cc}">
+          <div class="ok">✓ 已加入行事曆${items.length > 1 ? `・${items.length} 筆` : ''}
+            <span class="pill" style="--c:${cc}; --c-ink:${inkOn(cc)}">${msg.card.kind === 'shared' ? '共同' : '個人'}</span>
+          </div>
+          ${detail}
+          ${miss.length ? `<div class="miss">這幾段看不懂，沒有加進去：<br>${miss.map(m => '・' + esc(m)).join('<br>')}</div>` : ''}
+          <button class="goto" data-goto="${esc(msg.card.date)}">在行事曆上看</button>
+        </div>`;
+    } else {
+      const style = mine ? ` style="background:${c}; color:${inkOn(c)}"` : '';
+      body = `<div class="bubble"${style}>${esc(msg.text)}</div>`;
+    }
+
+    return `${mark}
+      <div class="msg ${mine ? 'me' : ''} ${msg.role === 'bot' ? 'bot' : ''}">
+        ${mine ? '' : `<div class="avatar" style="background:${c}22; color:${c}">${esc(who.slice(0,1))}</div>`}
+        <div class="col">
+          <div class="name">${esc(who)}</div>
+          ${body}
+          <div class="ts">${time}</div>
+        </div>
+      </div>`;
+  }).join('');
+  requestAnimationFrame(() => { $('#scChat').scrollTop = $('#scChat').scrollHeight; });
+}
+
+/** 切換鈕、送出鈕、標題列的顏色跟著目前身分／模式走 */
+function renderComposer(){
+  const meColor = hexOf(me().colorKey);
+  const shColor = hexOf(state.shared);
+  $('#seg').querySelectorAll('button[data-kind]').forEach(b => {
+    const on = b.dataset.kind === state.kind;
+    b.setAttribute('aria-pressed', String(on));
+    b.style.setProperty('--c', b.dataset.kind === 'shared' ? shColor : meColor);
+  });
+  const active = state.kind === 'shared' ? shColor : meColor;
+  const send = $('#sendBtn');
+  send.style.setProperty('--c', active);
+  send.style.setProperty('--c-ink', inkOn(active));
+
+  const who = $('#barWho');
+  who.hidden = state.tab !== 'chat';
+  who.querySelector('i').style.background = meColor;
+  who.querySelector('b').textContent = me().name;
+}
+
+function renderAll(){ renderCal(); renderDayPanel(); renderChat(); renderComposer(); }
+
+/* ============================================================
+   四、機器人「小曆」
+   ============================================================ */
+const BOT = '小曆';
+const whenText = (dateStr, time) => {
+  const d = fromYmd(dateStr);
+  return `${d.getMonth()+1}/${d.getDate()}（週${WEEK_TXT[d.getDay()]}）${time || '整天'}`;
+};
+const botSay = (text, card) =>
+  pushChat({ id:uid(), role:'bot', name:BOT, text:text || '', card:card || null, ts:Date.now() });
+
+async function handle(rawText){
+  const cmd = parse(rawText);
+
+  if(cmd.type === 'add'){
+    // 一次可能貼了好幾筆 → 先拆開，每一段各自解析
+    const segs = splitCommands(rawText);
+    const ok = [], miss = [];
+    for(const seg of segs){
+      const p = parse(seg);
+      if(p.type !== 'add' || !p.date || !p.title){ miss.push(seg); continue; }
+      const ev = {
+        id:uid(), date:p.date, time:p.time, title:p.title,
+        by:me().name, byId:state.meId, kind:state.kind, createdAt:Date.now()
+      };
+      await addEvent(ev);
+      ok.push(ev);
+    }
+
+    if(!ok.length){
+      if(!cmd.date)  return botSay('看不出來是哪一天耶。可以說「9/15」「明天」或「下週三」。');
+      return botSay(`${whenText(cmd.date, cmd.time)} 要排什麼呢？`);
+    }
+
+    // 畫面跳到第一筆所在的月份
+    const first = fromYmd(ok[0].date);
+    state.sel = ok[0].date;
+    state.view = new Date(first.getFullYear(), first.getMonth(), 1);
+
+    return botSay('', {
+      date: ok[0].date,
+      kind: state.kind,
+      colorKey: colorKeyOf(ok[0]),
+      items: ok.map(e => ({
+        when:  whenText(e.date, e.time),                                   // 單筆用的完整寫法
+        short: `${fromYmd(e.date).getMonth()+1}/${fromYmd(e.date).getDate()} ${e.time || '整天'}`,
+        title: e.title
+      })),
+      miss                                    // 沒看懂的段落，一起回報
+    });
+  }
+
+  if(cmd.type === 'delete'){
+    if(!cmd.date && !cmd.keyword) return botSay('要刪哪一筆呢？可以說「刪除10/15」或「刪除 看醫生」。');
+
+    let hit = state.events;
+    if(cmd.date)    hit = hit.filter(e => e.date === cmd.date);
+    if(cmd.keyword) hit = hit.filter(e => e.title.includes(cmd.keyword));
+    hit = hit.slice().sort((a,b) => (a.time||'99').localeCompare(b.time||'99'));
+
+    if(!hit.length){
+      const dLabel = cmd.date ? `${fromYmd(cmd.date).getMonth()+1}/${fromYmd(cmd.date).getDate()}` : '';
+      const what = [dLabel, cmd.keyword].filter(Boolean).join(' ');
+      return botSay(`找不到「${what}」這筆行程。`);
+    }
+
+    // 只給了日期而那天有好幾筆 → 先問清楚，不要一次全砍掉
+    if(hit.length > 1 && !cmd.all && !cmd.keyword){
+      const d = fromYmd(cmd.date);
+      const md = `${d.getMonth()+1}/${d.getDate()}`;
+      return botSay(
+        `${md} 有 ${hit.length} 筆：\n` +
+        hit.map(e => `・${e.time || '整天'} ${e.title}`).join('\n') +
+        `\n\n要刪哪一筆？可以說「刪除${md} ${hit[0].title}」，或說「刪除${md} 全部」。`
+      );
+    }
+
+    for(const e of hit) await delEvent(e.id);
+    return botSay(`已刪除 ${hit.length} 筆：\n` + hit.map(e => whenText(e.date, e.time) + ' ' + e.title).join('\n'));
+  }
+
+  if(cmd.type === 'query'){
+    const to = new Date(TODAY);
+    if(cmd.range === 'week') to.setDate(to.getDate() + (6 - TODAY.getDay()));
+    else to.setMonth(to.getMonth() + 1, 0);
+    const a = ymd(TODAY), b = ymd(to);
+    const list = state.events.filter(e => e.date >= a && e.date <= b)
+      .sort((x,y) => (x.date + (x.time||'99')).localeCompare(y.date + (y.time||'99')));
+    const label = cmd.range === 'week' ? '這週' : '這個月';
+    if(!list.length) return botSay(`${label}目前沒有安排喔。`);
+    return botSay(`${label}的行程（${list.length} 筆）：\n` +
+      list.map(e => `・${whenText(e.date, e.time)} ${e.title}` +
+        (!e.kind || e.kind === 'shared' ? '（共同）' : '')).join('\n'));
+  }
+}
+
+/* ============================================================
+   五、事件綁定
+   ============================================================ */
+function setTab(name){
+  state.tab = name;
+  const isCal = name === 'cal';
+  $('#scCal').hidden = !isCal;
+  $('#scChat').hidden = isCal;
+  $('#composer').hidden = isCal;
+  $('#tabCal').setAttribute('aria-selected', String(isCal));
+  $('#tabChat').setAttribute('aria-selected', String(!isCal));
+  $('#barTitle').textContent = isCal ? '共用行事曆' : '新增行程';
+  renderComposer();
+  if(!isCal){
+    $('#chatBadge').hidden = true;
+    requestAnimationFrame(() => { $('#scChat').scrollTop = $('#scChat').scrollHeight; });
+  }
+}
+$('#tabCal').onclick  = () => setTab('cal');
+$('#tabChat').onclick = () => setTab('chat');
+
+$('#prevM').onclick = () => { state.view.setMonth(state.view.getMonth()-1); renderCal(); };
+$('#nextM').onclick = () => { state.view.setMonth(state.view.getMonth()+1); renderCal(); };
+$('#todayBtn').onclick = () => {
+  state.view = new Date(TODAY.getFullYear(), TODAY.getMonth(), 1);
+  state.sel = ymd(TODAY); renderCal(); renderDayPanel();
+};
+
+$('#calGrid').addEventListener('click', e => {
+  const btn = e.target.closest('.day'); if(!btn) return;
+  state.sel = btn.dataset.d;
+  const d = fromYmd(state.sel);
+  if(d.getMonth() !== state.view.getMonth()) state.view = new Date(d.getFullYear(), d.getMonth(), 1);
+  renderCal(); renderDayPanel();
+});
+$('#dpList').addEventListener('click', e => {
+  const del = e.target.closest('[data-del]');
+  if(del){ delEvent(del.dataset.del); return; }        // 按 ✕ 直接刪，不要順便打開詳情
+  const row = e.target.closest('[data-open]');
+  if(row) openDetail(row.dataset.open);
+});
+$('#dpList').addEventListener('keydown', e => {
+  const row = e.target.closest('[data-open]');
+  if(row && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); openDetail(row.dataset.open); }
+});
+$('#chatList').addEventListener('click', e => {
+  const btn = e.target.closest('[data-goto]'); if(!btn) return;
+  state.sel = btn.dataset.goto;
+  const d = fromYmd(state.sel);
+  state.view = new Date(d.getFullYear(), d.getMonth(), 1);
+  renderCal(); renderDayPanel(); setTab('cal');
+});
+
+// 個人／共同 切換
+$('#seg').addEventListener('click', e => {
+  const b = e.target.closest('button[data-kind]'); if(!b) return;
+  state.kind = b.dataset.kind;
+  store.set(LS.kind, state.kind);
+  renderComposer();
+});
+$('#segHint').onclick = () => openSheet();
+
+const input = $('#msgInput'), sendBtn = $('#sendBtn');
+
+/** 輸入框跟著內容長高（貼一整串時才看得到全部），最高 130px */
+function autoGrow(){
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 130) + 'px';
+}
+input.addEventListener('input', autoGrow);
+
+async function send(){
+  const text = input.value.trim(); if(!text) return;
+  if(!hasIdentity()){ openSheet(true); return; }   // 還沒選身分就先請他選，行程才有主人
+  input.value = ''; autoGrow(); sendBtn.disabled = true;
+  await pushChat({ id:uid(), role:'me', byId:state.meId, name:me().name, text, ts:Date.now() });
+  try{ await handle(text); }
+  catch(err){ await botSay('剛剛沒存成功，請再說一次。'); }
+  sendBtn.disabled = false; input.focus();
+}
+sendBtn.onclick = send;
+
+// 手機上 Enter 要能換行（多筆輸入靠換行），所以只有滑鼠裝置按 Enter 才送出
+const isTouch = window.matchMedia('(pointer: coarse)').matches;
+input.addEventListener('keydown', e => {
+  if(e.key === 'Enter' && !e.shiftKey && !isTouch){ e.preventDefault(); send(); }
+});
+
+// 快捷句：折行排列，不橫向捲動
+const CHIPS = ['9/15 看醫生','明天下午3點 開會','9/15 看醫生 9/16 打疫苗','這週有什麼'];
+$('#chips').innerHTML = CHIPS.map(c => `<button type="button" class="chip">${c}</button>`).join('');
+$('#chips').addEventListener('click', e => {
+  if(!e.target.classList.contains('chip')) return;
+  input.value = e.target.textContent; autoGrow(); input.focus();
+});
+
+/* ============================================================
+   六、設定 / 說明面板
+   ============================================================ */
+function swatches(group, current){
+  return `<div class="swatches" data-group="${group}">` + COLOR_KEYS.map(k =>
+    `<button type="button" class="sw" data-k="${k}" style="--c:${hexOf(k)}"
+       aria-pressed="${k === current}" aria-label="${PALETTE[k].name}" title="${PALETTE[k].name}"></button>`
+  ).join('') + '</div>';
+}
+
+function openSheet(firstRun){
+  if(document.querySelector('.sheet-bg')) return;
+  let curId = state.meId;                                        // 面板上正在編輯的成員（空字串＝要新增一位）
+  let pickMe = (state.members[curId] || {}).colorKey || 'pine';
+  let pickShared = state.shared;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-bg';
+  wrap.innerHTML = `
+    <div class="sheet" role="dialog" aria-label="設定與說明">
+      <h2>${firstRun ? '你是哪一位？' : '設定'}</h2>
+      <p>${firstRun
+        ? '這是全家共用的行事曆。名冊上已經有你就直接選，沒有的話再新增一位。'
+        : '在「新增行程」頁打一句話，行程就會排進共用行事曆。'}</p>
+
+      <h3>你是誰</h3>
+      <div class="who-pick" id="whoPick"></div>
+
+      <h3>名稱</h3>
+      <input type="text" id="nameIn" maxlength="8" placeholder="例如：HaZel">
+      <p class="note" id="nameErr" hidden style="color:var(--mark)">請先填名稱。</p>
+
+      <h3>代表顏色</h3>
+      <div id="meSw"></div>
+
+      <h3>共同行程的顏色</h3>
+      <div id="shSw"></div>
+      <p class="note">「共同」是全家一起的行程（例如家庭聚餐）。這個顏色大家共用，你改了其他人也會跟著變。</p>
+
+      <h3>管理成員</h3>
+      <div class="members" id="memberList"></div>
+      <p class="note">移除只是把人從名冊拿掉，他排過的行程會留著。</p>
+
+      <h3>小曆聽得懂的說法</h3>
+      <ul>
+        <li>日期：<code>9/15</code>、<code>9月15日</code>、<code>15號</code>、<code>今天</code>、<code>明天</code>、<code>下週三</code></li>
+        <li>時間：<code>下午3點</code>、<code>15:00</code>、<code>早上9點半</code>（不講就是整天）</li>
+        <li>刪除：<code>刪除10/15</code>（整天）、<code>刪除10/15 響食天堂</code>（指定一筆）、<code>刪除 看醫生</code>（用標題找）</li>
+        <li>查詢：<code>這週有什麼</code>、<code>這個月有什麼</code></li>
+      </ul>
+      <p class="note">那天有好幾筆而你只講日期時，小曆會先列出來問你要刪哪一筆，不會一次全砍。要全砍就說「刪除10/15 全部」。</p>
+
+      <h3>幫行程加照片</h3>
+      <p>在行事曆頁<strong>點一下行程</strong>就會打開詳情，可以加照片（票券、藥單、菜單都好用）。照片會先在你手機上壓縮再上傳，家人打開同一個網址就看得到。</p>
+
+      <h3>一次加好幾筆</h3>
+      <p>直接把一整串貼進來就好，小曆會<strong>看到日期就切一筆</strong>，自動分開。換行、分號、「還有」「然後」也都算分隔。</p>
+      <ul>
+        <li><code>9/15 看醫生 9/16 打疫苗</code> → 兩筆</li>
+        <li><code>09/04（五）搶83z桃園　09/05（六）13:30 憨包做指甲</code> → 兩筆，「（五）」這種星期註記會自動去掉</li>
+      </ul>
+      <p class="note">有段落看不懂的話，小曆會把它列出來告訴你，不會默默吃掉。</p>
+
+      <h3>之後要接真的 LINE 需要補什麼</h3>
+      <p>解析文字的 <code>parse()</code> 跟寫入行事曆的 <code>addEvent()</code> 是分開的兩塊，換成真 LINE 時可以整段搬過去。要補的是中間那一段：</p>
+      <ul>
+        <li>在 LINE Developers 開一個 <strong>Messaging API</strong> 官方帳號，加進群組</li>
+        <li>一支對外網址接 <strong>Webhook</strong>（LINE 會把群組訊息 POST 過來）</li>
+        <li>收到後跑同一套 <code>parse()</code>，寫進資料庫，再回覆確認訊息</li>
+      </ul>
+
+      <button class="save" id="sheetSave">${firstRun ? '開始使用' : '儲存'}</button>
+      <div class="status ${state.online ? '' : 'off'}"><i></i>${state.online
+        ? '雲端共用中 — 打開同一個網址的人看到同一份行事曆'
+        : '本機模式 — 資料只存在這台裝置的瀏覽器'}</div>
+    </div>`;
+  $('.app').appendChild(wrap);
+
+  const byName = (a,b) => a.name.localeCompare(b.name, 'zh-Hant');
+  /** 重畫身分選擇、名稱、色票、成員清單（色票單獨點選時不呼叫，才不會蓋掉打到一半的名字） */
+  function paint(){
+    const people = Object.values(state.members).sort(byName);
+    wrap.querySelector('#whoPick').innerHTML =
+      people.map(p => `<button type="button" data-id="${p.id}" aria-pressed="${p.id === curId}">
+          <i style="background:${hexOf(p.colorKey)}"></i>${esc(p.name)}</button>`).join('') +
+      `<button type="button" data-id="__new" aria-pressed="${curId === ''}">＋ 新成員</button>`;
+
+    const cur = state.members[curId];
+    wrap.querySelector('#nameIn').value = cur ? cur.name : '';
+    wrap.querySelector('#meSw').innerHTML = swatches('me', pickMe);
+    wrap.querySelector('#shSw').innerHTML = swatches('shared', pickShared);
+    wrap.querySelector('#memberList').innerHTML = people.length
+      ? people.map(p => `<span><i style="background:${hexOf(p.colorKey)}"></i>${esc(p.name)}${p.id === state.meId ? '（你）' : ''}
+          <button class="rm" data-rm="${p.id}">移除</button></span>`).join('')
+      : '<span style="color:var(--ink-3)">名冊上還沒有人</span>';
+  }
+  paint();
+
+  wrap.addEventListener('click', async e => {
+    // 切換身分
+    const who = e.target.closest('#whoPick button');
+    if(who){
+      curId = who.dataset.id === '__new' ? '' : who.dataset.id;
+      if(state.members[curId]) pickMe = state.members[curId].colorKey;
+      wrap.querySelector('#nameErr').hidden = true;
+      paint();
+      return;
+    }
+    // 移除成員：點兩下才真的刪（沙箱環境不一定能用 confirm 視窗）
+    const rm = e.target.closest('[data-rm]');
+    if(rm){
+      if(rm.dataset.sure !== '1'){ rm.dataset.sure = '1'; rm.textContent = '確定移除？'; return; }
+      const id = rm.dataset.rm;
+      await removeMember(id);
+      if(curId === id){ curId = state.meId; pickMe = (state.members[curId] || {}).colorKey || 'pine'; }
+      paint(); renderAll();
+      return;
+    }
+    // 色票
+    const sw = e.target.closest('.sw');
+    if(sw){
+      const group = sw.closest('.swatches').dataset.group;
+      if(group === 'me') pickMe = sw.dataset.k; else pickShared = sw.dataset.k;
+      sw.closest('.swatches').querySelectorAll('.sw')
+        .forEach(b => b.setAttribute('aria-pressed', String(b === sw)));
+      return;
+    }
+    if(e.target === wrap && !firstRun) wrap.remove();   // 首次設定不讓點外面關掉
+  });
+
+  wrap.querySelector('#sheetSave').onclick = async () => {
+    const name = wrap.querySelector('#nameIn').value.trim();
+    if(!name){
+      wrap.querySelector('#nameErr').hidden = false;
+      wrap.querySelector('#nameIn').focus();
+      return;
+    }
+    wrap.remove();
+    await saveMember(curId, name, pickMe);
+    if(pickShared !== state.shared) await saveSharedColor(pickShared);
+    renderAll();
+  };
+}
+$('#btnInfo').onclick = () => openSheet(false);
+
+/* ============================================================
+   六之二、行程詳情（點行程可以加照片）
+   ============================================================ */
+function openViewer(src){
+  const v = document.createElement('div');
+  v.className = 'viewer';
+  v.innerHTML = `<img src="${src}" alt="放大檢視">`;
+  v.onclick = () => v.remove();
+  $('.app').appendChild(v);
+}
+
+const PHOTO_HINT = '照片會先在你手機上縮到 1200px 再上傳（約 250KB），家人打開同一個網址就看得到。';
+
+async function openDetail(eventId){
+  if(document.querySelector('.sheet-bg')) return;
+  const ev = state.events.find(x => x.id === eventId);
+  if(!ev) return;
+  const c = colorOf(ev);
+  const shared = !ev.kind || ev.kind === 'shared';
+  const owner = (state.members[ev.byId] || {}).name || ev.by || '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-bg';
+  wrap.innerHTML = `
+    <div class="sheet" role="dialog" aria-label="行程詳情">
+      <h2>${esc(ev.title)}</h2>
+      <p class="detail-when">
+        ${esc(whenText(ev.date, ev.time))}
+        <span class="pill" style="--c:${c}; --c-ink:${inkOn(c)}">${shared ? '共同' : '個人'}</span>
+        ${owner ? `<span style="font-family:inherit; color:var(--ink-3)">${esc(owner)} 新增</span>` : ''}
+      </p>
+
+      <h3>照片</h3>
+      <div class="photo-grid" id="pg"></div>
+      <label class="addphoto" id="addBtn">＋ 加照片
+        <input type="file" accept="image/*" multiple hidden id="fileIn">
+      </label>
+      <p class="note" id="pNote">${PHOTO_HINT}</p>
+
+      <button class="save" id="closeD">關閉</button>
+      <button class="danger" id="delD">刪除這筆行程</button>
+    </div>`;
+  $('.app').appendChild(wrap);
+
+  const pg = wrap.querySelector('#pg');
+  const note = wrap.querySelector('#pNote');
+  const addBtn = wrap.querySelector('#addBtn');
+
+  async function paintPhotos(){
+    const shots = await photosOf(eventId);
+    pg.innerHTML = shots.length
+      ? shots.map(p => `<figure>
+            <img src="${p.data}" alt="${esc(ev.title)} 的照片" data-big="1">
+            <button class="x" data-rm="${p.id}" aria-label="刪除這張照片">✕</button>
+          </figure>`).join('')
+      : '<p class="note" style="grid-column:1/-1; margin:0">還沒有照片。</p>';
+  }
+  paintPhotos();
+
+  wrap.querySelector('#fileIn').addEventListener('change', async e => {
+    const files = [...e.target.files];
+    e.target.value = '';                       // 清掉才能連續選同一張
+    if(!files.length) return;
+    addBtn.setAttribute('aria-disabled', 'true');
+    let ok = 0, fail = 0;
+    for(let i = 0; i < files.length; i++){
+      note.textContent = `處理中… ${i+1} / ${files.length}`;
+      try{
+        const url = await shrink(files[i]);
+        if(!url){ fail++; continue; }
+        await addPhoto(eventId, url);
+        ok++;
+      }catch(err){ fail++; }
+    }
+    await syncPhotoCount(eventId);
+    await paintPhotos();
+    renderDayPanel();
+    addBtn.removeAttribute('aria-disabled');
+    note.textContent = fail
+      ? `加了 ${ok} 張，${fail} 張沒成功（可能是格式不支援，或壓縮後還是太大）。`
+      : PHOTO_HINT;
+  });
+
+  wrap.addEventListener('click', async e => {
+    const rm = e.target.closest('[data-rm]');
+    if(rm){
+      await delPhoto(rm.dataset.rm);
+      await syncPhotoCount(eventId);
+      await paintPhotos();
+      renderDayPanel();
+      return;
+    }
+    const big = e.target.closest('[data-big]');
+    if(big){ openViewer(big.getAttribute('src')); return; }
+    if(e.target === wrap) wrap.remove();
+  });
+
+  wrap.querySelector('#closeD').onclick = () => wrap.remove();
+  wrap.querySelector('#delD').onclick = async function(){
+    if(this.dataset.sure !== '1'){
+      this.dataset.sure = '1';
+      this.textContent = '確定刪除？照片也會一起刪';
+      return;
+    }
+    wrap.remove();
+    await delEvent(eventId);
+  };
+}
+
+/* ============================================================
+   七、啟動
+   ============================================================ */
+/** 接上雲端資料庫，並開始訂閱四份資料 */
+function connect(conn){
+  db = conn;
+  state.online = true;
+
+  // 行程：別人新增的會即時出現
+  db.collection('events').onSnapshot(snap => {
+    state.events = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    renderCal(); renderDayPanel();
+  }, () => { db = null; state.online = false; });
+
+  // 成員名冊（名字與代表色）
+  db.collection('members').onSnapshot(snap => {
+    const next = {};
+    snap.docs.forEach(d => { next[d.id] = { id:d.id, ...d.data() }; });
+    state.members = next;
+    renderAll();
+  }, () => {});
+
+  // 全家共用設定（目前只有共同行程的顏色）
+  db.doc('settings/general').onSnapshot(snap => {
+    if(snap.exists && snap.data().sharedColorKey) state.shared = snap.data().sharedColorKey;
+    renderAll();
+  }, () => {});
+
+  // 對話紀錄：一份文件裝一個陣列
+  db.doc('chat/log').onSnapshot(snap => {
+    const prev = state.chat.length;
+    state.chat = (snap.exists && snap.data().messages) || [];
+    renderChat();
+    if(state.tab !== 'chat' && prev > 0 && state.chat.length > prev) $('#chatBadge').hidden = false;
+  }, () => {});
+}
+
+/* ============================================================
+   八、Firebase 連線 + 家庭代碼
+   ============================================================ */
+
+/* 家庭代碼是這份行事曆的鑰匙。所有資料都存在 families/<代碼>/ 底下，
+   Firestore 規則不允許「列出有哪些家庭」，所以不知道代碼的人讀不到任何東西。
+   代碼優先從網址取（#f=xxx），因為 localStorage 在某些 App 的內嵌瀏覽器不會留存
+   —— 這正是之前一直長出重複成員的原因。 */
+function readFamilyCode(){
+  const m = location.hash.match(/[#&]f=([A-Za-z0-9]{16,40})/);
+  if(m){ store.set(LS.family, m[1]); return m[1]; }
+  return store.get(LS.family) || '';
+}
+function newFamilyCode(){
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';   // 去掉 l/o/0/1 避免看錯
+  let s = '';
+  for(let i = 0; i < 16; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+/** 把代碼寫進網址，這樣「複製這一頁的連結」傳出去就等於分享權限 */
+function putCodeInUrl(code){
+  history.replaceState(null, '', location.pathname + location.search + '#f=' + code);
+}
+
+/** 把 Firestore 包成和原本 claude.use('db') 一樣的用法。
+    這樣上面 500 多行的程式碼一行都不用改 —— 這就是當初把「存資料」和「畫面」
+    分開的回報：換掉整個後端，只動這一層。 */
+function makeDb(fs, api, code){
+  const { doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
+          onSnapshot, query, where } = api;
+  const full = p => `families/${code}/${p}`;
+
+  const snapOf = s => ({
+    id: s.id,
+    exists: s.exists(),
+    data: () => s.data(),
+    metadata: { fromCache:false, hasPendingWrites:false }
+  });
+  const qsnapOf = s => ({
+    docs: s.docs.map(snapOf), size: s.size, empty: s.empty,
+    metadata: { fromCache:false, hasPendingWrites:false }
+  });
+
+  function docApi(path){
+    const ref = doc(fs, full(path));
+    return {
+      id: ref.id,
+      path,
+      get:    async () => snapOf(await getDoc(ref)),
+      set:    data => setDoc(ref, data),
+      update: data => updateDoc(ref, data),
+      delete: () => deleteDoc(ref),
+      onSnapshot: (next, err) => onSnapshot(ref, s => next(snapOf(s)), err)
+    };
+  }
+  function queryApi(q){
+    return {
+      where: (f, op, v) => queryApi(query(q, where(f, op, v))),
+      get:   async () => qsnapOf(await getDocs(q)),
+      onSnapshot: (next, err) => onSnapshot(q, s => next(qsnapOf(s)), err)
+    };
+  }
+  function colApi(path){
+    const ref = collection(fs, full(path));
+    return {
+      doc: id => docApi(path + '/' + id),
+      ...queryApi(ref)
+    };
+  }
+  return { doc: docApi, collection: colApi };
+}
+
+/* ---- 開場：沒有代碼就先擋在閘門 ---- */
+async function boot(){
+  const gate = $('#gate');
+  let code = readFamilyCode();
+
+  // 顯示閘門，等使用者輸入或建立代碼
+  function showGate(){
+    gate.hidden = false;
+    $('#gateIn').focus();
+  }
+  $('#gateJoin').onclick = () => {
+    const v = $('#gateIn').value.trim().replace(/[^A-Za-z0-9]/g, '');
+    if(v.length < 16){ $('#gateErr').hidden = false; return; }
+    store.set(LS.family, v);
+    putCodeInUrl(v);
+    location.reload();
+  };
+  $('#gateIn').addEventListener('keydown', e => { if(e.key === 'Enter') $('#gateJoin').click(); });
+  $('#gateNew').onclick = () => {
+    const v = newFamilyCode();
+    store.set(LS.family, v);
+    putCodeInUrl(v);
+    location.reload();
+  };
+
+  if(!code){ showGate(); return; }
+
+  // 有代碼 → 連 Firebase
+  gate.hidden = true;
+  putCodeInUrl(code);                      // 確保網址帶著代碼，方便直接複製分享
+  try{
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js');
+    const fsApi = await import('https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js');
+    const app = initializeApp(FIREBASE_CONFIG);
+    const fs = fsApi.getFirestore(app);
+    connect(makeDb(fs, fsApi, code));
+  }catch(err){
+    console.error('Firebase 連線失敗', err);
+    $('#offline').hidden = false;           // 連不上就退回本機模式，資料不會不見
+  }
+}
+
+loadLocal();
+setTab('cal');
+renderAll();
+boot();
+
+// 等名冊載進來再問「你是誰」。太早問的話名單還是空的、只能按「新增」，
+// 就會每開一次就多長出一位重複的成員 —— 這是上一版名單越來越多「我」的原因。
+setTimeout(() => { if(!$('#gate').hidden) return; if(!hasIdentity()) openSheet(true); }, 1800);
+
+// 主題切換時重新上色，因為色票有淺／深兩版
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+new MutationObserver(renderAll).observe(document.documentElement, { attributeFilter:['data-theme'] });
+</script>
+
+</body>
+</html>
