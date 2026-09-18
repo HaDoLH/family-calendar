@@ -33,6 +33,17 @@
 
 **要邀家人，直接把這一頁的連結傳給他就好。**
 
+### 代碼規則
+
+- **至少 8 個字**，可用英文、數字、`-`、`_`
+- **可以自己取好記的**，例如 `hazel-fam`、`dumbcouple`
+- **一律轉成小寫** —— 否則 `Hazel-Fam` 和 `hazel-fam` 會是兩個不同的家庭，兩人打不一樣就各自看到空白行事曆
+- 「加入」和「新建」是同一個動作：打一組沒人用過的代碼，就等於開了一個新家庭
+
+為什麼是 8 碼：代碼是唯一的一道鎖，字數決定亂猜猜不猜得到。8 碼約 1 兆種組合，實務上猜不到。另外被亂掃還有個副作用 —— **掃描流量算在你的 Firebase 免費額度上**。
+
+要調整長度改 `index.html` 的 `MIN_CODE`，並同步改下面 Firestore 規則的 `code.size() >= 8`。
+
 ### 為什麼代碼要放在網址裡
 
 因為 `localStorage` 不保證留得住（無痕視窗、App 內嵌瀏覽器、清除資料都會沒）。之前在 Claude Artifact 版就踩過這個坑 —— 每開一次 App 就以為是新用戶，成員名冊長出一堆重複的「我」。代碼放連結裡就不依賴它了。
@@ -57,7 +68,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // 只開放「家庭代碼」底下的資料，且代碼長度必須夠
     match /families/{code}/{doc=**} {
-      allow read, write: if code.size() >= 16;
+      allow read, write: if code.size() >= 8;
     }
   }
 }

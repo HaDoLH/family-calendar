@@ -38,7 +38,7 @@
   <div class="warn">注意：同名的資料會被覆蓋。如果這個家庭已經在用了，請先確認不會蓋掉新資料。</div>
 
   <label for="code">家庭代碼</label>
-  <input id="code" placeholder="16 個英數字" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <input id="code" placeholder="至少 8 個字，例如 hazel-fam" autocomplete="off" autocapitalize="off" spellcheck="false">
 
   <button id="go">開始匯入</button>
   <pre id="log" hidden></pre>
@@ -54,17 +54,21 @@ function say(msg){
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// 跟 index.html 用同一套整理規則：轉小寫、只留英數與 - _
+const normCode = s => String(s || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
 // 網址帶 #f=xxx 或瀏覽器記過代碼的話，自動填進來
 (() => {
-  const m = location.hash.match(/[#&]f=([A-Za-z0-9]{16,40})/);
+  const m = location.hash.match(/[#&]f=([A-Za-z0-9_-]{2,40})/);
   let v = m ? m[1] : '';
   if(!v){ try{ v = localStorage.getItem('gunli.family') || ''; }catch(e){} }
-  if(v) $('#code').value = v;
+  if(v) $('#code').value = normCode(v);
 })();
 
 $('#go').onclick = async () => {
-  const code = $('#code').value.trim().replace(/[^A-Za-z0-9]/g, '');
-  if(code.length < 16){ say('❌ 代碼至少 16 個英數字'); return; }
+  const code = normCode($('#code').value);
+  if(code.length < 8){ say('❌ 代碼至少 8 個字，只能用英文、數字和 - _'); return; }
+  $('#code').value = code;
   $('#go').disabled = true;
   logEl.textContent = '';
 
@@ -90,6 +94,7 @@ $('#go').onclick = async () => {
     }
     say(`\n完成，共寫入 ${n} 筆。`);
     say(`現在可以打開：index.html#f=${code}`);
+    say('（如果打開是空的，先確認代碼大小寫一致 —— 全部都是小寫）');
     say('確認資料都在之後，請刪掉 import.html 與 seed.json。');
   }catch(err){
     say('❌ 失敗：' + (err && err.message ? err.message : err));
