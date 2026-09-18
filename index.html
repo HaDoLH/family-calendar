@@ -335,7 +335,12 @@ body{
 .card .what{font-size:17px; font-weight:700; margin-top:2px; word-break:break-word}
 /* 一次加好幾筆時，改用條列 */
 .card .list{display:flex; flex-direction:column; gap:9px}
-.card .row{display:flex; gap:10px; align-items:baseline}
+.card .row{display:flex; gap:9px; align-items:baseline}
+/* 一次加好幾筆、而且歸屬不同時，每列前面一顆自己的顏色點 */
+.card .row .dot{
+  width:7px; height:7px; border-radius:50%; flex:0 0 auto;
+  align-self:flex-start; margin-top:7px;
+}
 .card .row .w{
   font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3);
   flex:0 0 auto; white-space:nowrap; font-variant-numeric:tabular-nums;
@@ -757,6 +762,41 @@ const DATE_TOKEN = new RegExp(
 const isWeak = h => !!(h[4] || h[5]);
 const atBoundary = (line, i) => i === 0 || /[\s、，,。;；)）]/.test(line[i-1]);
 
+/* ---- 行首前綴：指定這一筆是誰的、或是不是共同行程 --------------
+   例如「共同-09/03 12:00 搶票」「女友-09/05 13:30 做指甲」。
+   會蓋過輸入框上方的切換鈕，所以一次貼上混著不同歸屬也沒問題。 */
+const KIND_WORDS = {
+  '共同':'shared', '大家':'shared', '全家':'shared', '一起':'shared',
+  '個人':'personal', '我':'personal'
+};
+
+/** 用名字找成員。打「女友」能對到「憨女友」，但對不到唯一一位就不猜。 */
+function matchMember(word){
+  const w = word.trim().toLowerCase();
+  if(!w) return null;
+  const all = Object.values(state.members);
+  let hit = all.filter(m => m.name.toLowerCase() === w);          // 完全相同優先
+  if(hit.length === 1) return hit[0];
+  hit = all.filter(m => {                                          // 再試包含關係
+    const n = m.name.toLowerCase();
+    return n.includes(w) || w.includes(n);
+  });
+  return hit.length === 1 ? hit[0] : null;                         // 模稜兩可就不猜
+}
+
+/** 拆出行首前綴。認不出來就回 null，整句原樣交給後面解析。
+    一定要有分隔符號（- ： 、 之類），否則「明天 下午3點 開會」的
+    「明天」會被誤當成前綴。 */
+function parsePrefix(text){
+  const m = String(text).match(/^\s*([^\s\-–—:：,，、]{1,10})\s*[-–—:：,，、]\s*(.+)$/s);
+  if(!m) return null;
+  const word = m[1], rest = m[2];
+  if(KIND_WORDS[word]) return { kind:KIND_WORDS[word], byId:null, rest };
+  const mem = matchMember(word);
+  if(mem) return { kind:'personal', byId:mem.id, rest };
+  return null;
+}
+
 function splitCommands(raw){
   // 先用換行、分號、「還有」「然後」這種明確的分隔切開
   const lines = raw.split(/[\n;；]+|\s+(?:還有|然後|接著)\s+/)
@@ -1015,15 +1055,22 @@ function renderChat(){
       // items 是新格式（可能好幾筆）；舊訊息只有 when / title，補成一筆
       const items = msg.card.items || [{ when:msg.card.when, title:msg.card.title }];
       const miss = msg.card.miss || [];
+      // 這批是不是全部同一種歸屬？混合的話就不顯示單一標籤，改成每列一個色點
+      const uniform = items.every(it => (it.colorKey || msg.card.colorKey) === (items[0].colorKey || msg.card.colorKey));
       const detail = items.length === 1
         ? `<div class="when">${esc(items[0].when)}</div>
            <div class="what">${esc(items[0].title)}</div>`
-        : `<div class="list">${items.map(it =>
-             `<div class="row"><span class="w">${esc(it.short || it.when)}</span><span class="n">${esc(it.title)}</span></div>`
-           ).join('')}</div>`;
+        : `<div class="list">${items.map(it => {
+             const ic = hexOf(it.colorKey || msg.card.colorKey || state.shared);
+             return `<div class="row">
+               <i class="dot" style="background:${ic}" title="${esc(it.who || '')}"></i>
+               <span class="w">${esc(it.short || it.when)}</span>
+               <span class="n">${esc(it.title)}</span>
+             </div>`;
+           }).join('')}</div>`;
       body = `<div class="card" style="--c:${cc}">
           <div class="ok">✓ 已加入行事曆${items.length > 1 ? `・${items.length} 筆` : ''}
-            <span class="pill" style="--c:${cc}; --c-ink:${inkOn(cc)}">${msg.card.kind === 'shared' ? '共同' : '個人'}</span>
+            ${uniform ? `<span class="pill" style="--c:${cc}; --c-ink:${inkOn(cc)}">${msg.card.kind === 'shared' ? '共同' : '個人'}</span>` : ''}
           </div>
           ${detail}
           ${miss.length ? `<div class="miss">這幾段看不懂，沒有加進去：<br>${miss.map(m => '・' + esc(m)).join('<br>')}</div>` : ''}
@@ -1088,11 +1135,18 @@ async function handle(rawText){
     const segs = splitCommands(rawText);
     const ok = [], miss = [];
     for(const seg of segs){
-      const p = parse(seg);
+      const pre = parsePrefix(seg);              // 行首的「共同-」「女友-」
+      const p = parse(pre ? pre.rest : seg);
       if(p.type !== 'add' || !p.date || !p.title){ miss.push(seg); continue; }
+
+      // 前綴優先，沒有前綴才用輸入框上方的切換鈕
+      const kind    = pre ? pre.kind : state.kind;
+      const ownerId = (pre && pre.byId) ? pre.byId : state.meId;
+      const owner   = state.members[ownerId] || me();
+
       const ev = {
         id:uid(), date:p.date, time:p.time, title:p.title,
-        by:me().name, byId:state.meId, kind:state.kind, createdAt:Date.now()
+        by:owner.name, byId:ownerId, kind, createdAt:Date.now()
       };
       await addEvent(ev);
       ok.push(ev);
@@ -1115,7 +1169,9 @@ async function handle(rawText){
       items: ok.map(e => ({
         when:  whenText(e.date, e.time),                                   // 單筆用的完整寫法
         short: `${fromYmd(e.date).getMonth()+1}/${fromYmd(e.date).getDate()} ${e.time || '整天'}`,
-        title: e.title
+        title: e.title,
+        colorKey: colorKeyOf(e),                       // 每一筆各自的顏色，混合歸屬時才分得出來
+        who: e.kind === 'shared' ? '共同' : e.by
       })),
       miss                                    // 沒看懂的段落，一起回報
     });
@@ -1254,7 +1310,7 @@ input.addEventListener('keydown', e => {
 });
 
 // 快捷句：折行排列，不橫向捲動
-const CHIPS = ['9/15 看醫生','明天下午3點 開會','9/15 看醫生 9/16 打疫苗','這週有什麼'];
+const CHIPS = ['9/15 看醫生','明天下午3點 開會','9/15 看醫生 9/16 打疫苗','共同-9/20 家庭聚餐','這週有什麼'];
 $('#chips').innerHTML = CHIPS.map(c => `<button type="button" class="chip">${c}</button>`).join('');
 $('#chips').addEventListener('click', e => {
   if(!e.target.classList.contains('chip')) return;
@@ -1315,6 +1371,15 @@ function openSheet(firstRun){
 
       <h3>幫行程加照片</h3>
       <p>在行事曆頁<strong>點一下行程</strong>就會打開詳情，可以加照片（票券、藥單、菜單都好用）。照片會先在你手機上壓縮再上傳，家人打開同一個網址就看得到。</p>
+
+      <h3>幫別人排、或指定共同</h3>
+      <p>在<strong>每一行的最前面</strong>加一個前綴加分隔符號，就能單獨指定那一筆的歸屬，<strong>會蓋過上方的切換鈕</strong>。所以一次貼上混著不同歸屬也沒問題。</p>
+      <ul>
+        <li><code>共同-9/6 16:30 聽演唱會</code> → 共同行程</li>
+        <li><code>女友-9/5 13:30 做指甲</code> → 算成「憨女友」的行程（代打）</li>
+        <li><code>男友-9/10 發薪水</code> → 算成「呆男友」的行程</li>
+      </ul>
+      <p class="note">名字對得到成員名冊就算數，打一半也可以（「女友」會對到「憨女友」）。認不出來的前綴會被當成標題的一部分，不會亂猜。分隔符號用 <code>-</code> <code>：</code> <code>、</code> 都可以。</p>
 
       <h3>一次加好幾筆</h3>
       <p>直接把一整串貼進來就好，小曆會<strong>看到日期就切一筆</strong>，自動分開。換行、分號、「還有」「然後」也都算分隔。</p>
