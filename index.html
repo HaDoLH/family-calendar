@@ -15,9 +15,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <!-- 加入主畫面時的預設名稱（iOS 的對話框會帶這個字） -->
 <meta name="apple-mobile-web-app-title" content="群曆">
-<!-- 主畫面圖示。檔案還沒放上去之前 iOS 會退回用網頁截圖 -->
+<!-- 主畫面圖示。180x180 是 iOS 的標準尺寸，圖必須不透明且不要自己切圓角
+     （有透明區會被合成成黑底，自己切圓角會被 iOS 再圓一次變雙重圓角） -->
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
