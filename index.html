@@ -443,11 +443,23 @@ body{
 .sheet ul{margin:0; padding-left:17px; color:var(--ink-2); font-size:13.5px}
 .sheet li{margin-bottom:7px}
 .sheet code{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--surface-2); padding:2px 6px; border-radius:6px; color:var(--ink)}
-.sheet input[type=text]{
+.sheet input[type=text],
+.sheet input[type=date],
+.sheet input[type=time]{
   width:100%; border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
   font:inherit; font-size:16px;             /* 同上：不能小於 16px，否則 iOS 會放大整頁 */
   padding:10px 13px; border-radius:var(--r-sm);
 }
+/* 日期和時間並排。用瀏覽器原生的選擇器，手機上會跳出系統滾輪 */
+.dt-row{display:flex; gap:8px}
+.dt-row input[type=date]{flex:1.4}
+.dt-row input[type=time]{flex:1}
+.dt-row input:disabled{opacity:.4}
+.allday{
+  display:flex; align-items:center; gap:8px; margin-top:10px;
+  font-size:13.5px; color:var(--ink-2); cursor:pointer;
+}
+.allday input{width:17px; height:17px; accent-color:var(--accent); margin:0}
 /* 「你是誰」的身分選擇 */
 .who-pick{display:flex; flex-wrap:wrap; gap:7px}
 .who-pick button{
@@ -846,6 +858,24 @@ async function addEvent(ev){
   if(db) await db.collection('events').doc(ev.id).set(ev);
   else { state.events.push(ev); saveLocal(); renderAll(); }
 }
+/** 修改行程。跟刪除一樣先動畫面再送請求，失敗才復原 */
+async function updEvent(id, patch){
+  const backup = state.events;
+  state.events = state.events.map(e => e.id === id ? { ...e, ...patch } : e);
+  renderCal(); renderDayPanel();
+  try{
+    if(db) await db.collection('events').doc(id).update(patch);
+    else saveLocal();
+    return true;
+  }catch(err){
+    console.error('修改失敗', err);
+    state.events = backup;
+    renderCal(); renderDayPanel();
+    toast('修改沒存成功，請檢查網路再試一次');
+    return false;
+  }
+}
+
 async function delEvent(id){
   /* 先從畫面上移除，不等雲端回應。
      原本是等 Firestore 回應後靠 onSnapshot 更新畫面，但只要網路慢、
@@ -1369,8 +1399,12 @@ function openSheet(firstRun){
       </ul>
       <p class="note">那天有好幾筆而你只講日期時，小曆會先列出來問你要刪哪一筆，不會一次全砍。要全砍就說「刪除10/15 全部」。</p>
 
+      <h3>打錯了要修改</h3>
+      <p>在行事曆頁<strong>點一下那筆行程</strong>就會打開編輯畫面，標題、日期、時間、是誰的行程都能改。改完按「儲存修改」。</p>
+      <p class="note">日期改掉的話月曆會自動跳過去，不會讓你找不到。改到一半點到旁邊不會直接關掉，會先提醒你還沒存。</p>
+
       <h3>幫行程加照片</h3>
-      <p>在行事曆頁<strong>點一下行程</strong>就會打開詳情，可以加照片（票券、藥單、菜單都好用）。照片會先在你手機上壓縮再上傳，家人打開同一個網址就看得到。</p>
+      <p>同一個畫面往下滑就是照片區（票券、藥單、菜單都好用）。照片會先在你手機上壓縮再上傳，家人打開同一個網址就看得到。</p>
 
       <h3>幫別人排、或指定共同</h3>
       <p>在<strong>每一行的最前面</strong>加一個前綴加分隔符號，就能單獨指定那一筆的歸屬，<strong>會蓋過上方的切換鈕</strong>。所以一次貼上混著不同歸屬也沒問題。</p>
@@ -1503,6 +1537,21 @@ async function openDetail(eventId){
         ${owner ? `<span style="font-family:inherit; color:var(--ink-3)">${esc(owner)} 新增</span>` : ''}
       </p>
 
+      <h3>標題</h3>
+      <input type="text" id="edTitle" value="${esc(ev.title)}" maxlength="60">
+
+      <h3>日期與時間</h3>
+      <div class="dt-row">
+        <input type="date" id="edDate" value="${esc(ev.date)}">
+        <input type="time" id="edTime" value="${esc(ev.time || '')}" ${ev.time ? '' : 'disabled'}>
+      </div>
+      <label class="allday"><input type="checkbox" id="edAllDay" ${ev.time ? '' : 'checked'}> 整天（不指定時間）</label>
+
+      <h3>這是誰的行程</h3>
+      <div class="who-pick" id="edWho"></div>
+
+      <button class="save" id="edSave">儲存修改</button>
+
       <h3>照片</h3>
       <div class="photo-grid" id="pg"></div>
       <label class="addphoto" id="addBtn">＋ 加照片
@@ -1515,6 +1564,74 @@ async function openDetail(eventId){
     </div>`;
   $('.app').appendChild(wrap);
 
+  /* ---- 編輯區 ---- */
+  let curKind = (!ev.kind || ev.kind === 'shared') ? 'shared' : 'personal';
+  let curBy   = ev.byId || state.meId;
+
+  const elTitle  = wrap.querySelector('#edTitle');
+  const elDate   = wrap.querySelector('#edDate');
+  const elTime   = wrap.querySelector('#edTime');
+  const elAllDay = wrap.querySelector('#edAllDay');
+  const elWho    = wrap.querySelector('#edWho');
+
+  function paintWho(){
+    const people = Object.values(state.members).sort((a,b) => a.name.localeCompare(b.name,'zh-Hant'));
+    elWho.innerHTML =
+      `<button type="button" data-own="__shared" aria-pressed="${curKind === 'shared'}">
+         <i style="background:${hexOf(state.shared)}"></i>共同</button>` +
+      people.map(p => `<button type="button" data-own="${p.id}"
+         aria-pressed="${curKind !== 'shared' && curBy === p.id}">
+         <i style="background:${hexOf(p.colorKey)}"></i>${esc(p.name)}${p.id === state.meId ? '（你）' : ''}</button>`).join('');
+  }
+  paintWho();
+
+  // 記下打開時的樣子，用來判斷有沒有改過
+  const snapshotForm = () => JSON.stringify({
+    t: elTitle.value.trim(), d: elDate.value,
+    tm: elAllDay.checked ? '' : (elTime.value || ''),
+    k: curKind, b: curBy
+  });
+  const opened = snapshotForm();
+  const isDirty = () => snapshotForm() !== opened;
+
+  elWho.addEventListener('click', e => {
+    const b = e.target.closest('button[data-own]'); if(!b) return;
+    if(b.dataset.own === '__shared'){ curKind = 'shared'; }
+    else { curKind = 'personal'; curBy = b.dataset.own; }
+    paintWho();
+  });
+
+  // 勾「整天」就把時間欄位關掉，避免留著一個看得到卻不生效的值
+  elAllDay.addEventListener('change', () => {
+    elTime.disabled = elAllDay.checked;
+    if(elAllDay.checked) elTime.value = '';
+  });
+
+  wrap.querySelector('#edSave').onclick = async () => {
+    const title = elTitle.value.trim();
+    if(!title){ toast('標題不能空白'); elTitle.focus(); return; }
+    if(!elDate.value){ toast('請選一個日期'); elDate.focus(); return; }
+
+    const patch = {
+      title,
+      date: elDate.value,
+      time: elAllDay.checked ? '' : (elTime.value || ''),
+      kind: curKind,
+      byId: curBy,
+      by:   (state.members[curBy] || {}).name || ev.by || me().name
+    };
+    wrap.remove();
+    if(await updEvent(eventId, patch)){
+      // 日期改掉的話，月曆跟著跳過去，不然使用者會找不到那筆
+      state.sel = patch.date;
+      const d = fromYmd(patch.date);
+      state.view = new Date(d.getFullYear(), d.getMonth(), 1);
+      renderCal(); renderDayPanel();
+      toast('已修改');
+    }
+  };
+
+  /* ---- 照片區 ---- */
   const pg = wrap.querySelector('#pg');
   const note = wrap.querySelector('#pNote');
   const addBtn = wrap.querySelector('#addBtn');
@@ -1565,7 +1682,11 @@ async function openDetail(eventId){
     }
     const big = e.target.closest('[data-big]');
     if(big){ openViewer(big.getAttribute('src')); return; }
-    if(e.target === wrap) wrap.remove();
+    // 點外面關閉，但改到一半誤觸就不要默默丟掉他打的東西
+    if(e.target === wrap){
+      if(isDirty()){ toast('有還沒儲存的修改'); return; }
+      wrap.remove();
+    }
   });
 
   wrap.querySelector('#closeD').onclick = () => wrap.remove();
