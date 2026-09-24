@@ -844,30 +844,48 @@ const KIND_WORDS = {
   '個人':'personal', '我':'personal'
 };
 
-/** 用名字找成員。打「女友」能對到「憨女友」，但對不到唯一一位就不猜。 */
+/** 用名字找成員。打「女友」能對到「憨女友」。
+    只接受「完全相同」或「是某個成員名字的一部分」——
+    反過來不行，否則「幫女友買禮物」整句會被當成她的名字。 */
 function matchMember(word){
   const w = word.trim().toLowerCase();
-  if(!w) return null;
+  if(w.length < 2) return null;
   const all = Object.values(state.members);
-  let hit = all.filter(m => m.name.toLowerCase() === w);          // 完全相同優先
+  let hit = all.filter(m => m.name.toLowerCase() === w);        // 完全相同優先
   if(hit.length === 1) return hit[0];
-  hit = all.filter(m => {                                          // 再試包含關係
-    const n = m.name.toLowerCase();
-    return n.includes(w) || w.includes(n);
-  });
-  return hit.length === 1 ? hit[0] : null;                         // 模稜兩可就不猜
+  hit = all.filter(m => m.name.toLowerCase().includes(w));      // 打一半也算（女友 → 憨女友）
+  return hit.length === 1 ? hit[0] : null;                      // 對到兩個以上就不猜
 }
 
-/** 拆出行首前綴。認不出來就回 null，整句原樣交給後面解析。
-    一定要有分隔符號（- ： 、 之類），否則「明天 下午3點 開會」的
-    「明天」會被誤當成前綴。 */
+/* 歸屬關鍵字可以出現在句子裡的任何位置，分隔符號可有可無：
+     女友-9/5 做指甲     女友 9/5 做指甲     9/5 做指甲 女友
+   但關鍵字必須「獨立成詞」（前後是空白、分隔符號或句首句尾）才算數。
+   這一條是為了不要誤判標題 —— 例如「女友家族吃火鍋」的「女友」是黏著
+   「家族」的，不算獨立成詞，所以不會被當成歸屬、標題也不會被吃掉。 */
+const TOKEN_RE = /[^\s\-–—:：,，、;；()（）]+/g;
+
 function parsePrefix(text){
-  const m = String(text).match(/^\s*([^\s\-–—:：,，、]{1,10})\s*[-–—:：,，、]\s*(.+)$/s);
-  if(!m) return null;
-  const word = m[1], rest = m[2];
-  if(KIND_WORDS[word]) return { kind:KIND_WORDS[word], byId:null, rest };
-  const mem = matchMember(word);
-  if(mem) return { kind:'personal', byId:mem.id, rest };
+  const s = String(text);
+  TOKEN_RE.lastIndex = 0;
+  let m;
+  while((m = TOKEN_RE.exec(s)) !== null){
+    const w = m[0];
+    if(w.length > 8) continue;                                  // 太長的不可能是歸屬詞
+    let hit = null;
+    if(KIND_WORDS[w]) hit = { kind:KIND_WORDS[w], byId:null };
+    else {
+      const mem = matchMember(w);
+      if(mem) hit = { kind:'personal', byId:mem.id };
+    }
+    if(!hit) continue;
+
+    // 把這個詞從原句挖掉，其餘原樣交給後面解析日期時間
+    const rest = (s.slice(0, m.index) + ' ' + s.slice(m.index + w.length))
+      .replace(/^[\s\-–—:：,，、;；]+/, '')                       // 挖掉後開頭可能留下分隔符號
+      .trim();
+    if(!rest) continue;                                          // 只有歸屬詞、沒有內容就不算
+    return { ...hit, rest };
+  }
   return null;
 }
 
@@ -1485,13 +1503,15 @@ function openSheet(firstRun){
       <p>同一個畫面往下滑就是照片區（票券、藥單、菜單都好用）。照片會先在你手機上壓縮再上傳，家人打開同一個網址就看得到。</p>
 
       <h3>幫別人排、或指定共同</h3>
-      <p>在<strong>每一行的最前面</strong>加一個前綴加分隔符號，就能單獨指定那一筆的歸屬，<strong>會蓋過上方的切換鈕</strong>。所以一次貼上混著不同歸屬也沒問題。</p>
+      <p>句子裡<strong>任何位置</strong>打上歸屬關鍵字就算數，<strong>會蓋過上方的切換鈕</strong>，所以一次貼上混著不同歸屬也沒問題。</p>
       <ul>
-        <li><code>共同-9/6 16:30 聽演唱會</code> → 共同行程</li>
-        <li><code>女友-9/5 13:30 做指甲</code> → 算成「憨女友」的行程（代打）</li>
-        <li><code>男友-9/10 發薪水</code> → 算成「呆男友」的行程</li>
+        <li><code>女友 9/5 13:30 做指甲</code>　<code>女友-9/5 做指甲</code>　<code>9/5 做指甲 女友</code>　三種都可以</li>
+        <li><code>共同 9/6 聽演唱會</code> → 共同行程（也可用 <code>大家</code> <code>全家</code> <code>一起</code>）</li>
+        <li><code>男友 9/10 發薪水</code> → 算成「呆男友」的行程（代打）</li>
+        <li><code>我 9/8 開會</code> → 自己的（也可用 <code>個人</code>）</li>
       </ul>
-      <p class="note">名字對得到成員名冊就算數，打一半也可以（「女友」會對到「憨女友」）。認不出來的前綴會被當成標題的一部分，不會亂猜。分隔符號用 <code>-</code> <code>：</code> <code>、</code> 都可以。</p>
+      <p class="note">名字打一半也對得到（「女友」會對到「憨女友」），對到兩個以上就不猜。</p>
+      <p class="note"><strong>關鍵字必須「獨立成詞」</strong>，前後要是空白、標點或句首句尾。這樣標題裡剛好有那幾個字才不會被誤判 —— 例如「<strong>女友家族吃火鍋</strong>」的「女友」黏著「家族」，不算獨立成詞，所以標題完整保留、歸屬照切換鈕走。「幫女友買禮物」同理。</p>
 
       <h3>一次加好幾筆</h3>
       <p>直接把一整串貼進來就好，小曆會<strong>看到日期就切一筆</strong>，自動分開。換行、分號、「還有」「然後」也都算分隔。</p>
