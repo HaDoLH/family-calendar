@@ -1037,6 +1037,19 @@ async function saveMember(id, name, colorKey){
   store.set(LS.meId, memberId);
   if(db) await db.collection('members').doc(memberId).set(doc);
   else saveLocal();
+  refreshPushLabel(name);        // 訂閱上的名字要跟著改，否則推播記錄裡看到的是舊名字
+}
+
+/** 訂閱是在「按下開啟」那一刻建立的，名字會被凍結在當時的值。
+    改名或之後才選身分時，把訂閱上的標籤補正。 */
+async function refreshPushLabel(name){
+  try{
+    if(!db || !swReg) return;
+    const sub = await swReg.pushManager.getSubscription();
+    if(!sub) return;
+    const id = await subId(sub.endpoint);
+    await db.collection('pushsubs').doc(id).update({ label: name });
+  }catch(e){ /* 純粹是記錄用的標籤，失敗不影響推播 */ }
 }
 /** 切換成名冊上的另一位（不新增資料） */
 function switchTo(id){
@@ -1452,8 +1465,8 @@ function openSheet(firstRun){
       <div class="members" id="memberList"></div>
       <p class="note">移除只是把人從名冊拿掉，他排過的行程會留著。</p>
 
-      <h3>手機通知</h3>
-      <div id="pushBox"></div>
+      ${firstRun ? '' : `<h3>手機通知</h3>
+      <div id="pushBox"></div>`}
 
       <h3>小曆聽得懂的說法</h3>
       <ul>
