@@ -1,5 +1,5 @@
 /* ============================================================
-   Service Worker — 群曆的推播接收員
+   Service Worker — 行程表的推播接收員
 
    這支程式跟網頁本身是分開跑的：App 關掉之後它還能被系統叫醒，
    所以「推播」一定要靠它。網頁裡的 JavaScript 在 App 關閉時不會執行。
@@ -18,7 +18,7 @@ self.addEventListener('push', event => {
   let d = {};
   try{ d = event.data ? event.data.json() : {}; }catch(err){ d = {}; }
 
-  const title = d.title || '群曆';
+  const title = d.title || '行程表';
   const options = {
     body: d.body || '',
     icon: 'icon-192.png',

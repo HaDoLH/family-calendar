@@ -1,4 +1,4 @@
-# 群曆
+# 行程表
 
 打一句話，行程就進共用行事曆。
 
@@ -88,7 +88,7 @@ service cloud.firestore {
 ## 本機開發
 
 ```bash
-cd 群曆
+cd 群曆          # App 名稱是「行程表」，但本機資料夾與 repo 仍叫舊名
 python -m http.server 8000
 ```
 

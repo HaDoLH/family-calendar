@@ -1,6 +1,6 @@
 {
-  "name": "群曆",
-  "short_name": "群曆",
+  "name": "行程表",
+  "short_name": "行程表",
   "description": "打一句話，行程就進共用行事曆",
   "lang": "zh-Hant",
   "display": "standalone",

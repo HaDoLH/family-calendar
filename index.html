@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <!-- viewport-fit=cover：iPhone 有瀏海／底部橫條時，env(safe-area-inset-*) 才有值 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>群曆</title>
+<title>行程表</title>
 
 <!-- PWA：加入主畫面後像 App 一樣全螢幕、沒有網址列 -->
 <link rel="manifest" href="manifest.json">
@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <!-- 加入主畫面時的預設名稱（iOS 的對話框會帶這個字） -->
-<meta name="apple-mobile-web-app-title" content="群曆">
+<meta name="apple-mobile-web-app-title" content="行程表">
 <!-- 主畫面圖示。180x180 是 iOS 的標準尺寸，圖必須不透明且不要自己切圓角
      （有透明區會被合成成黑底，自己切圓角會被 iOS 再圓一次變雙重圓角） -->
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -280,6 +280,40 @@ body{
 }
 @keyframes toastIn{from{opacity:0; transform:translate(-50%,6px)}to{opacity:1; transform:translate(-50%,0)}}
 @media (prefers-reduced-motion:reduce){.toast{animation:none}}
+
+/* ===========================================================
+   詢問通知的彈出視窗。置中的卡片，跟從下方滑上來的設定面板區隔開
+   —— 這是一個要當下決定的問題，不是一個可以慢慢逛的頁面
+   =========================================================== */
+.prompt-bg{
+  position:absolute; inset:0; z-index:25; padding:24px;
+  background:rgba(16,20,19,.55); display:grid; place-items:center;
+}
+.prompt{
+  background:var(--surface); border-radius:var(--r-lg);
+  padding:26px 22px 20px; max-width:320px; width:100%;
+  text-align:center; box-shadow:var(--shadow);
+  animation:popIn .2s ease;
+}
+@keyframes popIn{from{opacity:0; transform:scale(.94)}to{opacity:1; transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.prompt{animation:none}}
+.prompt .ico{font-size:34px; line-height:1; margin-bottom:12px}
+.prompt h3{
+  font-family:"Noto Serif TC",serif; font-weight:600; font-size:18px;
+  margin:0 0 10px; color:var(--ink); letter-spacing:normal;
+}
+.prompt p{font-size:13.5px; color:var(--ink-2); margin:0 0 20px; line-height:1.85}
+.prompt .primary{
+  width:100%; border:none; background:var(--accent); color:var(--accent-ink);
+  font:inherit; font-weight:500; font-size:15px; padding:13px;
+  border-radius:var(--r-md); cursor:pointer;
+}
+.prompt .primary:disabled{opacity:.6; cursor:default}
+.prompt .later{
+  margin-top:6px; width:100%; border:none; background:transparent;
+  color:var(--ink-3); font:inherit; font-size:13px; padding:10px; cursor:pointer;
+}
+.prompt .later:hover{color:var(--ink-2)}
 
 /* 連不上雲端時的提示條 */
 .offline{
@@ -560,10 +594,21 @@ body{
     <button class="tab" id="tabChat" role="tab" aria-selected="false"><span class="ico">＋</span>新增行程<span class="badge" id="chatBadge" hidden>1</span></button>
   </nav>
 
+  <!-- 詢問是否開啟通知。只在支援、且還沒問過／還沒決定時才跳 -->
+  <div class="prompt-bg" id="pushPrompt" hidden>
+    <div class="prompt" role="dialog" aria-label="開啟行程通知">
+      <div class="ico">🔔</div>
+      <h3>要開啟行程提醒嗎？</h3>
+      <p><strong>前一晚 21:00</strong> 提醒你明天的行程，<strong>早上 09:00</strong> 提醒今天的。<br>沒有行程的時候不會吵你。</p>
+      <button type="button" class="primary" id="ppYes">開啟提醒</button>
+      <button type="button" class="later" id="ppNo">以後再說</button>
+    </div>
+  </div>
+
   <!-- 家庭代碼閘門。預設顯示，確認有代碼之後才收起來 -->
   <section class="gate" id="gate">
     <div class="mark">🗓️</div>
-    <h2>群曆</h2>
+    <h2>行程表</h2>
     <p>打一句話，行程就進共用行事曆。<br>要先有家庭代碼才能看到內容。</p>
 
     <label for="gateIn">家庭代碼</label>
@@ -582,7 +627,7 @@ body{
 
 <script>
 /* ============================================================
-   群曆 — 打一句話，行程就進共用行事曆
+   行程表 — 打一句話，行程就進共用行事曆
 
    資料流：文字 → parse() 解析日期時間標題 → 寫進資料庫 → 月曆重畫
    ============================================================ */
@@ -652,7 +697,12 @@ const FIREBASE_CONFIG = window.FIREBASE_CONFIG || {};
    真正能拿來發推播的是私密金鑰，存在 GitHub Secret 裡。 */
 const VAPID_PUBLIC_KEY = 'BNMFwjnt8uM8bMhSP4KgzUOwvN6OAosgeNM8nG6OSLw5qBYJENhSpavjo9uj60bepn_35tSLfrYWy9jzT61wki0';
 
-const LS = { meId:'gunli.meId', kind:'gunli.kind', local:'gunli.local.v2', family:'gunli.family' };
+/* ⚠️ 這些鍵名不要改。改了等於清掉所有人存在瀏覽器裡的家庭代碼與身分，
+   大家都要重新輸入一次。App 名稱換成「行程表」時刻意保留舊前綴。 */
+const LS = {
+  meId:'gunli.meId', kind:'gunli.kind', local:'gunli.local.v2',
+  family:'gunli.family', pushAsk:'gunli.pushAsk'
+};
 
 /* 瀏覽器的 localStorage 不保證存得住（無痕視窗、App 內嵌瀏覽器、清除資料都會沒），
    所以包一層安全存取，讀不到就當作沒有，不讓整支程式當掉。 */
@@ -1483,10 +1533,10 @@ function openSheet(firstRun){
     const views = {
       'no-push': isStandalone()
         ? `<p class="note">這台裝置的瀏覽器不支援網頁推播。</p>`
-        : `<p class="note"><strong>要先把群曆加到主畫面</strong>，從主畫面打開才能開啟通知 —— 這是 iOS 的規定，在 Safari 分頁裡完全不支援。<br><br>做法：Safari 分享鈕 → 加入主畫面 → 從桌面那顆圖示打開 → 再回來這裡。</p>`,
+        : `<p class="note"><strong>要先把行程表加到主畫面</strong>，從主畫面打開才能開啟通知 —— 這是 iOS 的規定，在 Safari 分頁裡完全不支援。<br><br>做法：Safari 分享鈕 → 加入主畫面 → 從桌面那顆圖示打開 → 再回來這裡。</p>`,
       'no-sw':     `<p class="note">這台裝置的瀏覽器不支援推播所需的功能。</p>`,
       'no-notify': `<p class="note">這台裝置的瀏覽器不支援通知。</p>`,
-      'denied':    `<p class="note">通知權限被拒絕過了，要去<strong>系統設定</strong>把群曆的通知打開才能再啟用。<br>iPhone：設定 → 通知 → 群曆。</p>`,
+      'denied':    `<p class="note">通知權限被拒絕過了，要去<strong>系統設定</strong>把行程表的通知打開才能再啟用。<br>iPhone：設定 → 通知 → 行程表。</p>`,
       'off':       `<button type="button" class="ghost-btn" id="pushOn">開啟這台裝置的通知</button>
                     <p class="note">開啟後，<strong>前一晚 21:00</strong> 會收到「明天的行程」、<strong>早上 09:00</strong> 收到「今天的行程」。沒行程的時段不會吵你。</p>`,
       'on':        `<p class="status"><i></i>這台裝置已開啟通知</p>
@@ -1513,7 +1563,7 @@ function openSheet(firstRun){
     const test = box.querySelector('#pushTest');
     if(test) test.onclick = async () => {
       if(!swReg) return;
-      await swReg.showNotification('群曆測試通知', {
+      await swReg.showNotification('行程表測試通知', {
         body: '看到這則就表示這台裝置設定成功了。',
         icon: 'icon-192.png', badge: 'icon-192.png', tag: 'gunli-test'
       });
@@ -1564,6 +1614,8 @@ function openSheet(firstRun){
     await saveMember(curId, name, pickMe);
     if(pickShared !== state.shared) await saveSharedColor(pickShared);
     renderAll();
+    // 第一次設定完身分，接著問要不要開通知
+    if(firstRun) setTimeout(maybeAskPush, 700);
   };
 }
 $('#btnInfo').onclick = () => openSheet(false);
@@ -1896,6 +1948,43 @@ async function enablePush(){
   return { ok:true };
 }
 
+/* 進來時主動問一次要不要開通知。
+   注意：iOS 的授權詢問只能由「使用者點擊」觸發，所以這裡不能直接呼叫
+   requestPermission()，只能先跳自己的卡片，等他按下按鈕才去要權限。 */
+const ASK_AGAIN_DAYS = 7;
+
+async function maybeAskPush(){
+  if(!$('#gate').hidden) return;                      // 還卡在家庭代碼那關
+  if(document.querySelector('.sheet-bg')) return;     // 設定或行程詳情開著，別打擾
+  if(pushSupport() !== 'ok') return;                  // 不支援（例如 Safari 分頁）就不要問，問了也沒用
+  if(Notification.permission !== 'default') return;   // 已允許或已拒絕就不再問
+  if(!swReg) return;
+  if(await swReg.pushManager.getSubscription()) return;
+
+  // 按過「以後再說」就隔一段時間再問，不要每次開都煩
+  const last = Number(store.get(LS.pushAsk) || 0);
+  if(Date.now() - last < ASK_AGAIN_DAYS * 86400000) return;
+
+  $('#pushPrompt').hidden = false;
+}
+
+$('#ppNo').onclick = () => {
+  store.set(LS.pushAsk, String(Date.now()));
+  $('#pushPrompt').hidden = true;
+};
+$('#ppYes').onclick = async () => {
+  const b = $('#ppYes');
+  b.disabled = true; b.textContent = '處理中…';
+  const r = await enablePush();
+  $('#pushPrompt').hidden = true;
+  b.disabled = false; b.textContent = '開啟提醒';
+  if(r.ok) toast('提醒已開啟');
+  else if(r.reason === 'denied'){
+    store.set(LS.pushAsk, String(Date.now()));
+    toast('沒有取得通知權限');
+  }else toast('這台裝置沒辦法開啟通知');
+};
+
 async function disablePush(){
   if(!swReg) return;
   const sub = await swReg.pushManager.getSubscription();
@@ -2048,7 +2137,11 @@ registerSW();          // 先裝好接收員，使用者按開關時才不用等
 
 // 等名冊載進來再問「你是誰」。太早問的話名單還是空的、只能按「新增」，
 // 就會每開一次就多長出一位重複的成員 —— 這是上一版名單越來越多「我」的原因。
-setTimeout(() => { if(!$('#gate').hidden) return; if(!hasIdentity()) openSheet(true); }, 1800);
+setTimeout(() => {
+  if(!$('#gate').hidden) return;
+  if(!hasIdentity()){ openSheet(true); return; }   // 先問「你是誰」，通知等他設定完再問
+  maybeAskPush();
+}, 1800);
 
 // 主題切換時重新上色，因為色票有淺／深兩版
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
