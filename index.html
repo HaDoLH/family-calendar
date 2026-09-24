@@ -1892,6 +1892,7 @@ function connect(conn){
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState !== 'visible') return;
   clearBadge();                       // 回到前景就等於看過了
+  checkForUpdate();                   // 順便看看有沒有新版程式
   if(!db) return;
   try{
     const snap = await db.collection('events').get();
@@ -1920,6 +1921,41 @@ function pushSupport(){
   if(!('PushManager' in window))     return 'no-push';     // iOS 在 Safari 分頁裡就是這個
   if(!('Notification' in window))    return 'no-notify';
   return 'ok';
+}
+
+/* ============================================================
+   自動更新偵測
+   ------------------------------------------------------------
+   PWA 從主畫面打開時，iOS 常常沿用上次還在記憶體裡的頁面，不會重新
+   抓程式。結果就是修好的東西在手機上「看起來沒效」，而且完全沒有跡象。
+
+   做法：回到前景時比對伺服器上 index.html 的 ETag。變了就代表有新版，
+   重新載入。不需要自己維護版本號 —— 檔案一改 ETag 就會變。
+   ============================================================ */
+let docStamp = null;
+let lastUpdateCheck = 0;
+
+async function checkForUpdate(){
+  if(Date.now() - lastUpdateCheck < 60000) return;      // 最多每分鐘查一次
+  lastUpdateCheck = Date.now();
+  try{
+    // cache:'reload' 會跳過快取去拿，並且把新的存回快取，
+    // 這樣接下來的 location.reload() 才拿得到新版而不是又讀到舊的
+    const res = await fetch('index.html', { cache:'reload' });
+    const stamp = res.headers.get('etag') || res.headers.get('last-modified');
+    if(!stamp) return;
+    if(docStamp === null){ docStamp = stamp; return; }   // 第一次只記錄
+    if(stamp === docStamp) return;
+
+    // 有新版了，但不要打斷正在進行的操作
+    if(document.querySelector('.sheet-bg')) return;
+    if(!$('#pushPrompt').hidden) return;
+    if($('#msgInput') && $('#msgInput').value.trim()) return;
+
+    docStamp = stamp;
+    toast('有新版本，重新載入…');
+    setTimeout(() => location.reload(), 900);
+  }catch(e){ /* 離線或抓失敗就算了，下次再查 */ }
 }
 
 /** 清掉主畫面圖示上的數字。打開 App 就代表看到了 */
@@ -2176,6 +2212,7 @@ renderAll();
 boot();
 registerSW();          // 先裝好接收員，使用者按開關時才不用等
 clearBadge();          // 開了 App 就把圖示上的數字清掉
+checkForUpdate();      // 記下目前版本，之後回到前景時才比對得出有沒有新版
 
 // 等名冊載進來再問「你是誰」。太早問的話名單還是空的、只能按「新增」，
 // 就會每開一次就多長出一位重複的成員 —— 這是上一版名單越來越多「我」的原因。
