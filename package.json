@@ -1,0 +1,12 @@
+{
+  "name": "family-calendar-notify",
+  "private": true,
+  "description": "群曆的推播發送腳本（由 GitHub Actions 執行，網頁本身不需要這些）",
+  "scripts": {
+    "notify:today": "node scripts/notify.js today",
+    "notify:tomorrow": "node scripts/notify.js tomorrow"
+  },
+  "dependencies": {
+    "web-push": "3.6.7"
+  }
+}

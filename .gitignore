@@ -1,0 +1,9 @@
+# npm 套件不進 repo（GitHub Actions 會自己 npm install）
+node_modules/
+package-lock.json
+
+# 系統與編輯器
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp

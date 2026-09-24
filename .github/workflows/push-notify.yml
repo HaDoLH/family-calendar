@@ -1,0 +1,53 @@
+name: 每日行程推播
+
+on:
+  schedule:
+    # cron 一律是 UTC，台北要減 8 小時
+    - cron: '0 1 * * *'    # 台北 09:00 → 推「今天的行程」
+    - cron: '0 13 * * *'   # 台北 21:00 → 推「明天的行程」
+  # 手動觸發，測試時不用等到隔天
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 要推哪一天
+        type: choice
+        default: today
+        options: [today, tomorrow]
+
+# 同時只跑一個，避免排程延遲時重疊送出重複通知
+concurrency:
+  group: push-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安裝 web-push
+        run: npm install --no-audit --no-fund
+
+      - name: 決定要推今天還是明天
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 13 * * *" ]; then
+            echo "mode=tomorrow" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=today" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 送出推播
+        env:
+          FAMILY_CODE:       ${{ secrets.FAMILY_CODE }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT:     ${{ secrets.VAPID_SUBJECT }}
+          # 公開金鑰不是機密，直接寫在這裡（也存在 index.html 裡，兩邊要一致）
+          VAPID_PUBLIC_KEY: 'BNMFwjnt8uM8bMhSP4KgzUOwvN6OAosgeNM8nG6OSLw5qBYJENhSpavjo9uj60bepn_35tSLfrYWy9jzT61wki0'
+        run: node scripts/notify.js "${{ steps.pick.outputs.mode }}"

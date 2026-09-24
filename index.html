@@ -469,6 +469,14 @@ body{
 }
 .who-pick button i{width:9px; height:9px; border-radius:50%; display:block}
 .who-pick button[aria-pressed="true"]{background:var(--surface); color:var(--ink); border-color:var(--ink-3); font-weight:500}
+/* 設定面板裡的次要按鈕 */
+.ghost-btn{
+  display:block; width:100%; margin-top:8px;
+  border:1px solid var(--line); background:transparent; color:var(--ink-2);
+  font:inherit; font-size:13.5px; padding:11px; border-radius:var(--r-md); cursor:pointer;
+}
+.ghost-btn:hover{border-color:var(--accent); color:var(--accent)}
+.ghost-btn:disabled{opacity:.5; cursor:default}
 .members .rm{
   margin-left:auto; border:none; background:transparent; color:var(--ink-3);
   cursor:pointer; font-size:13px; padding:3px 6px; border-radius:6px;
@@ -639,6 +647,10 @@ function inkOn(hex){
    ============================================================ */
 // Firebase 設定放在 firebase-config.js（同一份設定 import.html 也會用到）
 const FIREBASE_CONFIG = window.FIREBASE_CONFIG || {};
+
+/* 推播用的公開金鑰。跟 Firebase 的 apiKey 一樣，這一半本來就設計成公開；
+   真正能拿來發推播的是私密金鑰，存在 GitHub Secret 裡。 */
+const VAPID_PUBLIC_KEY = 'BNMFwjnt8uM8bMhSP4KgzUOwvN6OAosgeNM8nG6OSLw5qBYJENhSpavjo9uj60bepn_35tSLfrYWy9jzT61wki0';
 
 const LS = { meId:'gunli.meId', kind:'gunli.kind', local:'gunli.local.v2', family:'gunli.family' };
 
@@ -1390,6 +1402,9 @@ function openSheet(firstRun){
       <div class="members" id="memberList"></div>
       <p class="note">移除只是把人從名冊拿掉，他排過的行程會留著。</p>
 
+      <h3>手機通知</h3>
+      <div id="pushBox"></div>
+
       <h3>小曆聽得懂的說法</h3>
       <ul>
         <li>日期：<code>9/15</code>、<code>9月15日</code>、<code>15號</code>、<code>今天</code>、<code>明天</code>、<code>下週三</code></li>
@@ -1457,6 +1472,54 @@ function openSheet(firstRun){
       : '<span style="color:var(--ink-3)">名冊上還沒有人</span>';
   }
   paint();
+
+  /* ---- 手機通知區 ---- */
+  async function paintPush(){
+    const box = wrap.querySelector('#pushBox');
+    if(!box) return;
+    const st = await pushState();
+
+    // 每種狀態說清楚「現在怎樣」和「你能做什麼」，不要只寫「不支援」
+    const views = {
+      'no-push': isStandalone()
+        ? `<p class="note">這台裝置的瀏覽器不支援網頁推播。</p>`
+        : `<p class="note"><strong>要先把群曆加到主畫面</strong>，從主畫面打開才能開啟通知 —— 這是 iOS 的規定，在 Safari 分頁裡完全不支援。<br><br>做法：Safari 分享鈕 → 加入主畫面 → 從桌面那顆圖示打開 → 再回來這裡。</p>`,
+      'no-sw':     `<p class="note">這台裝置的瀏覽器不支援推播所需的功能。</p>`,
+      'no-notify': `<p class="note">這台裝置的瀏覽器不支援通知。</p>`,
+      'denied':    `<p class="note">通知權限被拒絕過了，要去<strong>系統設定</strong>把群曆的通知打開才能再啟用。<br>iPhone：設定 → 通知 → 群曆。</p>`,
+      'off':       `<button type="button" class="ghost-btn" id="pushOn">開啟這台裝置的通知</button>
+                    <p class="note">開啟後，<strong>前一晚 21:00</strong> 會收到「明天的行程」、<strong>早上 09:00</strong> 收到「今天的行程」。沒行程的時段不會吵你。</p>`,
+      'on':        `<p class="status"><i></i>這台裝置已開啟通知</p>
+                    <button type="button" class="ghost-btn" id="pushTest">傳一則測試通知</button>
+                    <button type="button" class="ghost-btn" id="pushOff">關閉這台裝置的通知</button>
+                    <p class="note">每台裝置要各自開啟一次。刪掉主畫面的圖示再加回來，要重新開啟。</p>`
+    };
+    box.innerHTML = views[st] || views['off'];
+
+    const on = box.querySelector('#pushOn');
+    if(on) on.onclick = async () => {
+      on.disabled = true; on.textContent = '處理中…';
+      const r = await enablePush();
+      if(r.ok) toast('通知已開啟');
+      else if(r.reason === 'denied') toast('你拒絕了通知權限');
+      else toast('這台裝置沒辦法開啟通知');
+      paintPush();
+    };
+
+    const off = box.querySelector('#pushOff');
+    if(off) off.onclick = async () => { await disablePush(); toast('已關閉這台裝置的通知'); paintPush(); };
+
+    // 本機測試：不經過伺服器，純粹驗證權限和 Service Worker 有沒有裝好
+    const test = box.querySelector('#pushTest');
+    if(test) test.onclick = async () => {
+      if(!swReg) return;
+      await swReg.showNotification('群曆測試通知', {
+        body: '看到這則就表示這台裝置設定成功了。',
+        icon: 'icon-192.png', badge: 'icon-192.png', tag: 'gunli-test'
+      });
+    };
+  }
+  paintPush();
 
   wrap.addEventListener('click', async e => {
     // 切換身分
@@ -1750,6 +1813,99 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 /* ============================================================
+   七之二、手機推播
+   ------------------------------------------------------------
+   iOS 的三條硬規則：
+   1. 必須是「加到主畫面」的 App，Safari 分頁裡完全不支援
+   2. 需要 iOS 16.4 以上
+   3. 授權詢問只能由「使用者點按鈕」觸發，不能自動跳
+   ============================================================ */
+let swReg = null;
+
+/** 是不是以 App 的樣子在跑（加到主畫面後開啟） */
+const isStandalone = () =>
+  window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+/** 這台裝置到底能不能推播，回傳原因字串方便對使用者說明 */
+function pushSupport(){
+  if(!('serviceWorker' in navigator)) return 'no-sw';
+  if(!('PushManager' in window))     return 'no-push';     // iOS 在 Safari 分頁裡就是這個
+  if(!('Notification' in window))    return 'no-notify';
+  return 'ok';
+}
+
+async function registerSW(){
+  if(!('serviceWorker' in navigator)) return null;
+  try{
+    swReg = await navigator.serviceWorker.register('sw.js');
+    return swReg;
+  }catch(err){ console.error('Service Worker 註冊失敗', err); return null; }
+}
+
+/** 把 base64url 的金鑰轉成 subscribe() 要的位元組陣列 */
+function urlB64ToUint8(base64){
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+/** 用訂閱網址算一個穩定的代號，重複訂閱才不會在資料庫裡長出一堆 */
+async function subId(endpoint){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  return [...new Uint8Array(buf)].slice(0,12).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+/** 目前這台裝置的訂閱狀態 */
+async function pushState(){
+  const sup = pushSupport();
+  if(sup !== 'ok') return sup;
+  if(Notification.permission === 'denied') return 'denied';
+  if(!swReg) return 'off';
+  const sub = await swReg.pushManager.getSubscription();
+  return sub ? 'on' : 'off';
+}
+
+/** 開啟通知。一定要從點擊事件裡呼叫，否則 iOS 會直接忽略 */
+async function enablePush(){
+  const sup = pushSupport();
+  if(sup !== 'ok') return { ok:false, reason:sup };
+  if(!swReg) await registerSW();
+  if(!swReg) return { ok:false, reason:'no-sw' };
+
+  const perm = await Notification.requestPermission();
+  if(perm !== 'granted') return { ok:false, reason:'denied' };
+
+  const sub = await swReg.pushManager.subscribe({
+    userVisibleOnly: true,                       // iOS 只允許「每次推播都要顯示通知」
+    applicationServerKey: urlB64ToUint8(VAPID_PUBLIC_KEY)
+  });
+
+  const raw = sub.toJSON();
+  const id = await subId(raw.endpoint);
+  const doc = {
+    id,
+    endpoint: raw.endpoint,
+    p256dh: raw.keys.p256dh,
+    auth:   raw.keys.auth,
+    label:  me().name || '未命名裝置',
+    ua:     navigator.userAgent.slice(0, 180),
+    url:    location.href,
+    createdAt: Date.now()
+  };
+  if(db) await db.collection('pushsubs').doc(id).set(doc);
+  return { ok:true };
+}
+
+async function disablePush(){
+  if(!swReg) return;
+  const sub = await swReg.pushManager.getSubscription();
+  if(!sub) return;
+  const id = await subId(sub.endpoint);
+  try{ if(db) await db.collection('pushsubs').doc(id).delete(); }catch(e){}
+  await sub.unsubscribe();
+}
+
+/* ============================================================
    八、Firebase 連線 + 家庭代碼
    ============================================================ */
 
@@ -1888,6 +2044,7 @@ loadLocal();
 setTab('cal');
 renderAll();
 boot();
+registerSW();          // 先裝好接收員，使用者按開關時才不用等
 
 // 等名冊載進來再問「你是誰」。太早問的話名單還是空的、只能按「新增」，
 // 就會每開一次就多長出一位重複的成員 —— 這是上一版名單越來越多「我」的原因。

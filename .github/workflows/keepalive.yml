@@ -1,0 +1,28 @@
+name: 保活（避免排程被自動停用）
+
+# GitHub 會把「公開 repo 超過 60 天沒有新 commit」的排程自動停用，
+# 而且只有 commit 算活動（開 issue、發 release 都不算）。
+# 這支每月 commit 一次時間戳，讓上面那支推播排程不會哪天靜靜死掉。
+on:
+  schedule:
+    - cron: '17 3 1 * *'   # 每月 1 號 UTC 03:17（台北 11:17）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 更新時間戳並 commit
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .keepalive
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .keepalive
+          # 沒有變更時不要讓工作失敗
+          git diff --staged --quiet || git commit -m "保活：更新時間戳，維持排程啟用"
+          git push
