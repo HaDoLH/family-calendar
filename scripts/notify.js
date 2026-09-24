@@ -128,7 +128,8 @@ function buildMessage(events, members, dateStr){
   const payload = JSON.stringify({
     title, body,
     url: SITE + '#f=' + FAMILY_CODE,
-    tag: 'gunli-' + MODE
+    tag: 'gunli-' + MODE,
+    count: events.length          // 主畫面圖示上要顯示的數字
   });
 
   let sent = 0, gone = 0, failed = 0;

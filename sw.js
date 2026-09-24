@@ -28,7 +28,19 @@ self.addEventListener('push', event => {
     renotify: true,
     data: { url: d.url || './' }
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+
+  event.waitUntil((async () => {
+    await self.registration.showNotification(title, options);
+    /* 在主畫面圖示上掛一個數字，直到使用者打開 App 才清掉。
+       通知會被滑掉、也可能沒看到，但圖示上的數字不會消失 ——
+       這是「不小心忘記」真正的解法。
+       （iOS 只有「加到主畫面」的 App 支援這個） */
+    try{
+      if(d.count && self.navigator && self.navigator.setAppBadge){
+        await self.navigator.setAppBadge(d.count);
+      }
+    }catch(err){ /* 不支援就算了，通知本身已經送出 */ }
+  })());
 });
 
 /* 點通知：已經開著就把那個視窗帶到前面，沒開就開起來 */

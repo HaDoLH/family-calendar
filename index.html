@@ -1555,6 +1555,7 @@ function openSheet(firstRun){
       'on':        `<p class="status"><i></i>這台裝置已開啟通知</p>
                     <button type="button" class="ghost-btn" id="pushTest">傳一則測試通知</button>
                     <button type="button" class="ghost-btn" id="pushOff">關閉這台裝置的通知</button>
+                    <p class="note"><strong>怕通知一點就消失？</strong>到 iPhone 的<strong>設定 → 通知 → 行程表 → 顯示方式 → 橫幅樣式</strong>改成「<strong>持續</strong>」，橫幅就會停在畫面上等你處理。<br><br>另外收到通知後，主畫面圖示會掛一個數字，打開 App 才會消失。</p>
                     <p class="note">每台裝置要各自開啟一次。刪掉主畫面的圖示再加回來，要重新開啟。</p>`
     };
     box.innerHTML = views[st] || views['off'];
@@ -1869,7 +1870,9 @@ function connect(conn){
 /* 手機切到別的 App 一段時間後，系統會把網頁凍結，連線可能變舊，
    畫面就會停在被凍結前的樣子。回到前景時主動重新對一次資料。 */
 document.addEventListener('visibilitychange', async () => {
-  if(document.visibilityState !== 'visible' || !db) return;
+  if(document.visibilityState !== 'visible') return;
+  clearBadge();                       // 回到前景就等於看過了
+  if(!db) return;
   try{
     const snap = await db.collection('events').get();
     state.events = snap.docs.map(d => ({ id:d.id, ...d.data() }));
@@ -1897,6 +1900,11 @@ function pushSupport(){
   if(!('PushManager' in window))     return 'no-push';     // iOS 在 Safari 分頁裡就是這個
   if(!('Notification' in window))    return 'no-notify';
   return 'ok';
+}
+
+/** 清掉主畫面圖示上的數字。打開 App 就代表看到了 */
+function clearBadge(){
+  try{ if(navigator.clearAppBadge) navigator.clearAppBadge(); }catch(e){}
 }
 
 async function registerSW(){
@@ -2147,6 +2155,7 @@ setTab('cal');
 renderAll();
 boot();
 registerSW();          // 先裝好接收員，使用者按開關時才不用等
+clearBadge();          // 開了 App 就把圖示上的數字清掉
 
 // 等名冊載進來再問「你是誰」。太早問的話名單還是空的、只能按「新增」，
 // 就會每開一次就多長出一位重複的成員 —— 這是上一版名單越來越多「我」的原因。
