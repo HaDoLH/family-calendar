@@ -1193,7 +1193,11 @@ function renderChat(){
            }).join('')}</div>`;
       body = `<div class="card" style="--c:${cc}">
           <div class="ok">✓ 已加入行事曆${items.length > 1 ? `・${items.length} 筆` : ''}
-            ${uniform ? `<span class="pill" style="--c:${cc}; --c-ink:${inkOn(cc)}">${msg.card.kind === 'shared' ? '共同' : '個人'}</span>` : ''}
+            ${uniform ? `<span class="pill" style="--c:${cc}; --c-ink:${inkOn(cc)}">${
+                 // 直接寫是誰的，比寫「個人」清楚 —— 代打時尤其重要。
+                 // 舊訊息沒有 who 欄位，退回原本的寫法
+                 esc((items[0] && items[0].who) || (msg.card.kind === 'shared' ? '共同' : '個人'))
+               }</span>` : ''}
           </div>
           ${detail}
           ${miss.length ? `<div class="miss">這幾段看不懂，沒有加進去：<br>${miss.map(m => '・' + esc(m)).join('<br>')}</div>` : ''}
