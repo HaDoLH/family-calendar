@@ -744,8 +744,12 @@ const colorOf = ev => hexOf(colorKeyOf(ev));
    一、解析引擎：把一句中文變成一筆行程
    （這一整區之後接真 LINE 時可以原封不動搬過去）
    ============================================================ */
+/* 日期區間的連接符號：10/17-20、10/17~10/20、10月17日到10月20日 */
+const RANGE_RE = /(\d{1,2})\s*[\/\-月]\s*(\d{1,2})\s*[日號]?\s*[-~～–—至到]\s*(?:(\d{1,2})\s*[\/\-月]\s*)?(\d{1,2})\s*[日號]?/;
+const MAX_RANGE_DAYS = 31;      // 避免手滑打成「1/1-12/31」生出一整年的行程
+
 function parseDate(text){
-  let t = text, date = null;
+  let t = text, date = null, endDate = null;
   const y = TODAY.getFullYear();
   const mk = (m, d) => {
     let dt = new Date(y, m-1, d);
@@ -756,7 +760,20 @@ function parseDate(text){
   const shift = n => { const dt = new Date(TODAY); dt.setDate(dt.getDate()+n); return ymd(dt); };
 
   let m;
-  if((m = t.match(/(\d{1,2})\s*[\/\-]\s*(\d{1,2})/))){
+  /* 先試區間，因為區間裡本來就含有單一日期的樣子，
+     不先攔下來的話「10/17~10/20」會只被看成 10/17 */
+  if((m = t.match(RANGE_RE))){
+    const m1 = +m[1], d1 = +m[2];
+    const m2 = m[3] ? +m[3] : m1;          // 沒寫第二個月份就沿用第一個（10/17-20）
+    const d2 = +m[4];
+    const a = mk(m1, d1), b = mk(m2, d2);
+    if(a && b && b >= a){
+      date = a; endDate = b;
+      t = t.replace(m[0], ' ');
+    }
+  }
+  if(date){ /* 區間已處理 */ }
+  else if((m = t.match(/(\d{1,2})\s*[\/\-]\s*(\d{1,2})/))){
     date = mk(+m[1], +m[2]); t = t.replace(m[0], ' ');
   } else if((m = t.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日號]?/))){
     date = mk(+m[1], +m[2]); t = t.replace(m[0], ' ');
@@ -773,11 +790,25 @@ function parseDate(text){
   } else if((m = t.match(/(\d{1,2})\s*[日號]/))){
     date = mk(TODAY.getMonth()+1, +m[1]); t = t.replace(m[0], ' ');
   }
-  return { date, rest:t };
+  return { date, endDate, rest:t };
 }
 
 function parseTime(text){
   let t = text, time = '';
+
+  /* 先處理時間區間（12:00-13:00、下午3點~5點）。
+     只取開始時間，整段一起挖掉 —— 不然結束時間會留在標題裡變成
+     「-13:00 午餐會」。行程只存一個時間，沒有結束時間的欄位。 */
+  const tr = t.match(/(凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*(\d{1,2})\s*(?::|：|點|時)\s*(半|\d{1,2})?\s*分?\s*[-~～–—至到]\s*(\d{1,2})\s*(?::|：|點|時)\s*(?:半|\d{1,2})?\s*分?/);
+  if(tr){
+    let h = +tr[2];
+    const period = tr[1];
+    const mi = tr[3] === '半' ? 30 : (tr[3] ? +tr[3] : 0);
+    if(/下午|傍晚|晚上/.test(period) && h < 12) h += 12;
+    if(period === '中午' && h < 12) h = 12;
+    if(h <= 23 && mi <= 59){ time = `${pad(h)}:${pad(mi)}`; return { time, rest: t.replace(tr[0], ' ') }; }
+  }
+
   // 一定要有「點」或「:」才算時間，避免把日期數字吃掉
   const m = t.match(/(凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*(\d{1,2})\s*(?::|：|點|時)\s*(半|\d{1,2})?\s*分?/);
   if(m){
@@ -816,7 +847,7 @@ function parse(raw){
     .replace(/[，,。！!、~～]+/g,' ')
     .replace(/\s+/g,' ')
     .trim();
-  return { type:'add', date:d.date, time:tm.time, title };
+  return { type:'add', date:d.date, endDate:d.endDate, time:tm.time, title };
 }
 
 /* ---- 一次貼一整串，自動拆成好幾筆 ----------------------------
@@ -824,7 +855,10 @@ function parse(raw){
    每個日期就是一筆新行程的起點，從那裡切開。
    （像排版時看到每個「段落標記」就分一段，日期就是這裡的段落標記） */
 const DATE_TOKEN = new RegExp(
-  '(\\d{1,2}\\s*[\\/\\-]\\s*\\d{1,2})' +                                  // ① 9/15、9-15
+  // ⓪ 日期區間要排在最前面，整段當成「一個日期」，否則 10/17~10/20
+  //    會被看成兩個日期而從中間切成兩筆
+  '(\\d{1,2}\\s*[\\/\\-月]\\s*\\d{1,2}\\s*[日號]?\\s*[-~～–—至到]\\s*(?:\\d{1,2}\\s*[\\/\\-月]\\s*)?\\d{1,2}\\s*[日號]?)' +
+  '|(\\d{1,2}\\s*[\\/\\-]\\s*\\d{1,2})' +                                  // ① 9/15、9-15
   '|(\\d{1,2}\\s*月\\s*\\d{1,2}\\s*[日號]?)' +                             // ② 9月15日
   '|(今天|今日|明天|明日|後天|大後天)' +                                    // ③
   '|((?:下下|下|這|本)?\\s*(?:週|周|星期|禮拜)\\s*[一二三四五六日天])' +      // ④ 下週三（弱）
@@ -833,8 +867,15 @@ const DATE_TOKEN = new RegExp(
 
 /* ④⑤ 太容易誤中（例如「開會在3號會議室」的「3號」、標題裡的「週報」），
    所以只有在前面是空白或標點時，才把它當成新一筆的起點。 */
-const isWeak = h => !!(h[4] || h[5]);
+// ⓪ 插在最前面之後，群組編號整個往後移一位 —— ④⑤ 現在是 h[5] h[6]
+const isWeak = h => !!(h[5] || h[6]);
 const atBoundary = (line, i) => i === 0 || /[\s、，,。;；)）]/.test(line[i-1]);
+
+/* 緊貼著冒號的不是日期，是時間的一部分。
+   例如「12:00-13:00」裡的「00-13」長得跟日期一模一樣，
+   不擋掉的話一句話會從時間中間被切成兩半。 */
+const notTimePart = (line, i, w) =>
+  !/[:：]/.test(line[i-1] || '') && !/[:：]/.test(line[i + w.length] || '');
 
 /* ---- 行首前綴：指定這一筆是誰的、或是不是共同行程 --------------
    例如「共同-09/03 12:00 搶票」「女友-09/05 13:30 做指甲」。
@@ -896,6 +937,7 @@ function splitCommands(raw){
   const out = [];
   for(const line of lines){
     const hits = [...line.matchAll(DATE_TOKEN)]
+      .filter(h => notTimePart(line, h.index, h[0]))
       .filter(h => !isWeak(h) || atBoundary(line, h.index));
     if(hits.length <= 1){ out.push(line); continue; }   // 只有一個日期就不用拆
     for(let i = 0; i < hits.length; i++){
@@ -1251,6 +1293,12 @@ const whenText = (dateStr, time) => {
   const d = fromYmd(dateStr);
   return `${d.getMonth()+1}/${d.getDate()}（週${WEEK_TXT[d.getDay()]}）${time || '整天'}`;
 };
+/** 2026-10-17 → 10/17 */
+const mdText = s => { const d = fromYmd(s); return `${d.getMonth()+1}/${d.getDate()}`; };
+/** 往後推 n 天 */
+const shiftYmd = (s, n) => { const d = fromYmd(s); d.setDate(d.getDate() + n); return ymd(d); };
+/** 兩個日期相差幾天（含頭尾） */
+const spanDays = (a, b) => Math.round((fromYmd(b) - fromYmd(a)) / 86400000) + 1;
 const botSay = (text, card) =>
   pushChat({ id:uid(), role:'bot', name:BOT, text:text || '', card:card || null, ts:Date.now() });
 
@@ -1260,23 +1308,46 @@ async function handle(rawText){
   if(cmd.type === 'add'){
     // 一次可能貼了好幾筆 → 先拆開，每一段各自解析
     const segs = splitCommands(rawText);
-    const ok = [], miss = [];
+    const ok = [], items = [], miss = [];
     for(const seg of segs){
-      const pre = parsePrefix(seg);              // 行首的「共同-」「女友-」
+      const pre = parsePrefix(seg);              // 「共同」「女友」之類的歸屬關鍵字
       const p = parse(pre ? pre.rest : seg);
       if(p.type !== 'add' || !p.date || !p.title){ miss.push(seg); continue; }
 
-      // 前綴優先，沒有前綴才用輸入框上方的切換鈕
+      // 關鍵字優先，沒寫才用輸入框上方的切換鈕
       const kind    = pre ? pre.kind : state.kind;
       const ownerId = (pre && pre.byId) ? pre.byId : state.meId;
       const owner   = state.members[ownerId] || me();
 
-      const ev = {
-        id:uid(), date:p.date, time:p.time, title:p.title,
-        by:owner.name, byId:ownerId, kind, createdAt:Date.now()
-      };
-      await addEvent(ev);
-      ok.push(ev);
+      // 日期區間（10/17~10/20）展開成每天一筆，行事曆上四天才都看得到
+      let days = p.endDate ? spanDays(p.date, p.endDate) : 1;
+      let clamped = false;
+      if(days > MAX_RANGE_DAYS){ days = MAX_RANGE_DAYS; clamped = true; }
+
+      const made = [];
+      for(let i = 0; i < days; i++){
+        const ev = {
+          id:uid(), date:shiftYmd(p.date, i), time:p.time, title:p.title,
+          by:owner.name, byId:ownerId, kind, createdAt:Date.now()
+        };
+        await addEvent(ev);
+        ok.push(ev); made.push(ev);
+      }
+
+      const first = made[0], last = made[made.length - 1];
+      items.push({
+        when:  days > 1
+          ? `${mdText(first.date)}–${mdText(last.date)}　共 ${days} 天${p.time ? '　' + p.time : ''}`
+          : whenText(first.date, first.time),
+        short: days > 1
+          ? `${mdText(first.date)}–${mdText(last.date)}`
+          : `${mdText(first.date)} ${first.time || '整天'}`,
+        title: p.title,
+        colorKey: colorKeyOf(first),
+        who: kind === 'shared' ? '共同' : owner.name,
+        days
+      });
+      if(clamped) miss.push(`（${p.title}：區間超過 ${MAX_RANGE_DAYS} 天，只加了前 ${MAX_RANGE_DAYS} 天）`);
     }
 
     if(!ok.length){
@@ -1293,13 +1364,7 @@ async function handle(rawText){
       date: ok[0].date,
       kind: state.kind,
       colorKey: colorKeyOf(ok[0]),
-      items: ok.map(e => ({
-        when:  whenText(e.date, e.time),                                   // 單筆用的完整寫法
-        short: `${fromYmd(e.date).getMonth()+1}/${fromYmd(e.date).getDate()} ${e.time || '整天'}`,
-        title: e.title,
-        colorKey: colorKeyOf(e),                       // 每一筆各自的顏色，混合歸屬時才分得出來
-        who: e.kind === 'shared' ? '共同' : e.by
-      })),
+      items,                                   // 一個區間只占一列，不會列出四筆一模一樣的
       miss                                    // 沒看懂的段落，一起回報
     });
   }
@@ -1493,7 +1558,8 @@ function openSheet(firstRun){
       <h3>小曆聽得懂的說法</h3>
       <ul>
         <li>日期：<code>9/15</code>、<code>9月15日</code>、<code>15號</code>、<code>今天</code>、<code>明天</code>、<code>下週三</code></li>
-        <li>時間：<code>下午3點</code>、<code>15:00</code>、<code>早上9點半</code>（不講就是整天）</li>
+        <li><strong>連續幾天</strong>：<code>10/17-20</code>、<code>10/17~10/20</code>、<code>10/17到10/20</code> → 自動展開成每天一筆</li>
+        <li>時間：<code>下午3點</code>、<code>15:00</code>、<code>早上9點半</code>（不講就是整天）。寫成區間（<code>12:00-13:00</code>）會取開始時間</li>
         <li>刪除：<code>刪除10/15</code>（整天）、<code>刪除10/15 響食天堂</code>（指定一筆）、<code>刪除 看醫生</code>（用標題找）</li>
         <li>查詢：<code>這週有什麼</code>、<code>這個月有什麼</code></li>
       </ul>
