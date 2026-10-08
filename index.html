@@ -189,6 +189,12 @@ body{
 }
 .ev .body{flex:1; min-width:0}
 .ev .title{font-weight:500; word-break:break-word}
+/* 備註：標題下方一行小字。最多兩行，再長就截斷（點進去看得到全部） */
+.ev .remark{
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  font-size:12px; color:var(--ink-2); margin-top:3px; line-height:1.6;
+  white-space:pre-wrap; word-break:break-word;
+}
 .ev .meta{font-size:11px; color:var(--ink-3); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap}
 .pill{
   font-size:10px; letter-spacing:.08em; padding:1px 7px; border-radius:999px;
@@ -367,6 +373,11 @@ body{
 }
 .card .when{font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink-2); font-variant-numeric:tabular-nums}
 .card .what{font-size:17px; font-weight:700; margin-top:2px; word-break:break-word}
+.card .remark{
+  font-size:12.5px; color:var(--ink-2); margin-top:6px; line-height:1.7;
+  white-space:pre-wrap; word-break:break-word;
+  padding-top:6px; border-top:1px dashed var(--line);
+}
 /* 一次加好幾筆時，改用條列 */
 .card .list{display:flex; flex-direction:column; gap:9px}
 .card .row{display:flex; gap:9px; align-items:baseline}
@@ -477,6 +488,12 @@ body{
 .sheet ul{margin:0; padding-left:17px; color:var(--ink-2); font-size:13.5px}
 .sheet li{margin-bottom:7px}
 .sheet code{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--surface-2); padding:2px 6px; border-radius:6px; color:var(--ink)}
+.sheet textarea{
+  width:100%; border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+  font:inherit; font-size:16px; line-height:1.6;     /* 同樣不能小於 16px，否則 iOS 放大整頁 */
+  padding:10px 13px; border-radius:var(--r-sm);
+  resize:vertical; min-height:72px; overscroll-behavior:contain;
+}
 .sheet input[type=text],
 .sheet input[type=date],
 .sheet input[type=time]{
@@ -744,6 +761,17 @@ const colorOf = ev => hexOf(colorKeyOf(ev));
    一、解析引擎：把一句中文變成一筆行程
    （這一整區之後接真 LINE 時可以原封不動搬過去）
    ============================================================ */
+/* 備註的分隔記號。打字時用 `//`、`備註:`、`註:` 都可以，
+   後面整段都算備註 —— 例如「10/17-20 玩台南 // 訂房編號 ABC123」 */
+const NOTE_RE = /\s*(?:\/\/|備註\s*[:：]|註\s*[:：])\s*([\s\S]+)$/;
+
+function splitNote(text){
+  const s = String(text);
+  const m = s.match(NOTE_RE);
+  if(!m) return { body:s, note:'' };
+  return { body:s.slice(0, m.index), note:m[1].trim() };
+}
+
 /* 日期區間的連接符號：10/17-20、10/17~10/20、10月17日到10月20日 */
 const RANGE_RE = /(\d{1,2})\s*[\/\-月]\s*(\d{1,2})\s*[日號]?\s*[-~～–—至到]\s*(?:(\d{1,2})\s*[\/\-月]\s*)?(\d{1,2})\s*[日號]?/;
 const MAX_RANGE_DAYS = 31;      // 避免手滑打成「1/1-12/31」生出一整年的行程
@@ -824,7 +852,9 @@ function parseTime(text){
 }
 
 function parse(raw){
-  const text = raw.trim();
+  const split = splitNote(String(raw).trim());
+  const text = split.body.trim();
+  const note = split.note;
   if(/(有什麼|有哪些|有沒有|看一下|查一下|查詢)/.test(text) && !/^(新增|加|幫我加|記)/.test(text)){
     return { type:'query', range: /(這個月|本月|這月)/.test(text) ? 'month' : 'week' };
   }
@@ -847,7 +877,7 @@ function parse(raw){
     .replace(/[，,。！!、~～]+/g,' ')
     .replace(/\s+/g,' ')
     .trim();
-  return { type:'add', date:d.date, endDate:d.endDate, time:tm.time, title };
+  return { type:'add', date:d.date, endDate:d.endDate, time:tm.time, title, note };
 }
 
 /* ---- 一次貼一整串，自動拆成好幾筆 ----------------------------
@@ -936,6 +966,10 @@ function splitCommands(raw){
                    .map(s => s.trim()).filter(Boolean);
   const out = [];
   for(const line of lines){
+    // 有備註的一行就是一筆行程。備註裡常常也有日期（「// 10/18 要去安平」），
+    // 不先擋下來的話會從備註中間被切成兩筆
+    if(splitNote(line).note){ out.push(line); continue; }
+
     const hits = [...line.matchAll(DATE_TOKEN)]
       .filter(h => notTimePart(line, h.index, h[0]))
       .filter(h => !isWeak(h) || atBoundary(line, h.index));
@@ -1184,6 +1218,7 @@ function renderDayPanel(){
       <span class="time">${e.time || '整天'}</span>
       <span class="body">
         <span class="title">${esc(e.title)}</span>
+        ${e.note ? `<span class="remark">${esc(e.note)}</span>` : ''}
         <span class="meta">
           ${shared ? '<span class="pill">共同</span>' : ''}
           ${owner ? esc(owner) + ' 新增' : ''}
@@ -1224,7 +1259,8 @@ function renderChat(){
       const uniform = items.every(it => (it.colorKey || msg.card.colorKey) === (items[0].colorKey || msg.card.colorKey));
       const detail = items.length === 1
         ? `<div class="when">${esc(items[0].when)}</div>
-           <div class="what">${esc(items[0].title)}</div>`
+           <div class="what">${esc(items[0].title)}</div>
+           ${items[0].note ? `<div class="remark">${esc(items[0].note)}</div>` : ''}`
         : `<div class="list">${items.map(it => {
              const ic = hexOf(it.colorKey || msg.card.colorKey || state.shared);
              return `<div class="row">
@@ -1310,8 +1346,11 @@ async function handle(rawText){
     const segs = splitCommands(rawText);
     const ok = [], items = [], miss = [];
     for(const seg of segs){
-      const pre = parsePrefix(seg);              // 「共同」「女友」之類的歸屬關鍵字
-      const p = parse(pre ? pre.rest : seg);
+      // 備註先拆出來。否則備註裡出現「女友」會被當成歸屬，還會從備註裡被挖掉
+      const { body, note } = splitNote(seg);
+      const pre = parsePrefix(body);             // 「共同」「女友」之類的歸屬關鍵字
+      const p = parse(pre ? pre.rest : body);
+      p.note = note;
       if(p.type !== 'add' || !p.date || !p.title){ miss.push(seg); continue; }
 
       // 關鍵字優先，沒寫才用輸入框上方的切換鈕
@@ -1328,7 +1367,7 @@ async function handle(rawText){
       for(let i = 0; i < days; i++){
         const ev = {
           id:uid(), date:shiftYmd(p.date, i), time:p.time, title:p.title,
-          by:owner.name, byId:ownerId, kind, createdAt:Date.now()
+          note:p.note || '', by:owner.name, byId:ownerId, kind, createdAt:Date.now()
         };
         await addEvent(ev);
         ok.push(ev); made.push(ev);
@@ -1343,6 +1382,7 @@ async function handle(rawText){
           ? `${mdText(first.date)}–${mdText(last.date)}`
           : `${mdText(first.date)} ${first.time || '整天'}`,
         title: p.title,
+        note: p.note || '',
         colorKey: colorKeyOf(first),
         who: kind === 'shared' ? '共同' : owner.name,
         days
@@ -1565,6 +1605,14 @@ function openSheet(firstRun){
       </ul>
       <p class="note">那天有好幾筆而你只講日期時，小曆會先列出來問你要刪哪一筆，不會一次全砍。要全砍就說「刪除10/15 全部」。</p>
 
+      <h3>備註</h3>
+      <p>打字時用 <code>//</code> 或 <code>備註:</code> 分隔，後面整段都算備註：</p>
+      <ul>
+        <li><code>10/17-20 玩台南 // 訂房編號 ABC123</code></li>
+        <li><code>10/20 看醫生 備註: 要帶健保卡</code></li>
+      </ul>
+      <p class="note">也可以點行程進去補。備註會顯示在行事曆標題下方（最多兩行，點進去看全部），推播通知也會帶上。<br><br>備註裡出現日期或名字都不會被誤判 ——「<code>// 10/18 要去安平</code>」不會被切成另一筆，「<code>// 女友說要買</code>」也不會被當成歸屬。</p>
+
       <h3>打錯了要修改</h3>
       <p>在行事曆頁<strong>點一下那筆行程</strong>就會打開編輯畫面，標題、日期、時間、是誰的行程都能改。改完按「儲存修改」。</p>
       <p class="note">日期改掉的話月曆會自動跳過去，不會讓你找不到。改到一半點到旁邊不會直接關掉，會先提醒你還沒存。</p>
@@ -1769,6 +1817,9 @@ async function openDetail(eventId){
       <h3>這是誰的行程</h3>
       <div class="who-pick" id="edWho"></div>
 
+      <h3>備註</h3>
+      <textarea id="edNote" rows="3" placeholder="訂房編號、要帶什麼、地址…">${esc(ev.note || '')}</textarea>
+
       <button class="save" id="edSave">儲存修改</button>
 
       <h3>照片</h3>
@@ -1792,6 +1843,7 @@ async function openDetail(eventId){
   const elTime   = wrap.querySelector('#edTime');
   const elAllDay = wrap.querySelector('#edAllDay');
   const elWho    = wrap.querySelector('#edWho');
+  const elNote   = wrap.querySelector('#edNote');
 
   function paintWho(){
     const people = Object.values(state.members).sort((a,b) => a.name.localeCompare(b.name,'zh-Hant'));
@@ -1808,6 +1860,7 @@ async function openDetail(eventId){
   const snapshotForm = () => JSON.stringify({
     t: elTitle.value.trim(), d: elDate.value,
     tm: elAllDay.checked ? '' : (elTime.value || ''),
+    n: elNote.value.trim(),
     k: curKind, b: curBy
   });
   const opened = snapshotForm();
@@ -1833,6 +1886,7 @@ async function openDetail(eventId){
 
     const patch = {
       title,
+      note: elNote.value.trim(),
       date: elDate.value,
       time: elAllDay.checked ? '' : (elTime.value || ''),
       kind: curKind,

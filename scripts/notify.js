@@ -85,7 +85,13 @@ function buildMessage(events, members, dateStr){
     const when  = e.time || '整天';
     const shared = !e.kind || e.kind === 'shared';
     const owner  = shared ? '共同' : ((members[e.byId] || {}).name || e.by || '');
-    return `${when}  ${e.title}${owner ? ' · ' + owner : ''}`;
+    let line = `${when}  ${e.title}${owner ? ' · ' + owner : ''}`;
+    // 備註常常正是出門前要看的那句（帶健保卡、訂房編號），太長就截斷
+    if(e.note){
+      const n = String(e.note).replace(/\s+/g, ' ').trim();
+      line += `\n　　${n.length > 40 ? n.slice(0, 40) + '…' : n}`;
+    }
+    return line;
   });
   return { title: head, body: lines.join('\n') };
 }
