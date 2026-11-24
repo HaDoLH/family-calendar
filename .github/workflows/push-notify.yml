@@ -2,17 +2,18 @@ name: 每日行程推播
 
 on:
   schedule:
-    # cron 一律是 UTC，台北要減 8 小時
-    - cron: '0 1 * * *'    # 台北 09:00 → 推「今天的行程」
-    - cron: '0 13 * * *'   # 台北 21:00 → 推「明天的行程」
-  # 手動觸發，測試時不用等到隔天
+    # ⚠️ 不要在這裡指定「幾點送」。GitHub 的排程觸發實測會延遲 6～12 小時
+    #    （說好 09:00，實際 16:00 才跑），所以指定時間毫無意義。
+    #    改成每 30 分鐘叫一次，由 notify.js 看台北時間自己決定該不該送。
+    - cron: '*/30 * * * *'
+  # 手動觸發，測試時不用等
   workflow_dispatch:
     inputs:
       mode:
         description: 要推哪一天
         type: choice
         default: today
-        options: [today, tomorrow]
+        options: [today, tomorrow, auto]
 
 # 同時只跑一個，避免排程延遲時重疊送出重複通知
 concurrency:
@@ -32,15 +33,14 @@ jobs:
       - name: 安裝 web-push
         run: npm install --no-audit --no-fund
 
-      - name: 決定要推今天還是明天
+      - name: 決定模式
         id: pick
         run: |
+          # 排程一律交給 notify.js 自己判斷時段；只有手動觸發才指定
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 13 * * *" ]; then
-            echo "mode=tomorrow" >> "$GITHUB_OUTPUT"
           else
-            echo "mode=today" >> "$GITHUB_OUTPUT"
+            echo "mode=auto" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 送出推播
