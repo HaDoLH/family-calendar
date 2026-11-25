@@ -211,9 +211,17 @@ function buildMessage(events, members, dateStr){
   for(const s of subs){
     const sub = { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
     try{
-      await webpush.sendNotification(sub, payload);
+      /* TTL：裝置離線時 Apple 要幫我們保留多久（預設會太短，錯過就丟掉）
+         urgency high：提醒類訊息要立刻送，normal 可能被延後或合併 */
+      const res = await webpush.sendNotification(sub, payload, {
+        TTL: 12 * 3600,
+        urgency: 'high'
+      });
       sent++;
-      console.log(`  ✓ 已送出 → ${s.label || s._id}`);
+      // 印出真實回應，才分得出「Apple 收下了」和「真的送到裝置」
+      const apns = (res.headers && (res.headers['apns-id'] || res.headers['location'])) || '';
+      console.log(`  ✓ 已送出 → ${s.label || s._id}　HTTP ${res.statusCode}` +
+                  `　${new URL(s.endpoint).host}${apns ? '　id=' + String(apns).slice(0, 20) : ''}`);
     }catch(err){
       // 404 / 410 表示這個訂閱已經失效（例如主畫面圖示被刪掉），清掉它
       if(err.statusCode === 404 || err.statusCode === 410){
