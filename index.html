@@ -174,15 +174,17 @@ body{
 .day-panel .head{display:flex; align-items:baseline; gap:8px; margin-bottom:12px}
 .day-panel .head strong{font-size:15px; font-weight:700}
 .day-panel .head em{font-style:normal; font-size:12px; color:var(--ink-3)}
-.day-panel .head .count{margin-left:10px; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3)}
-/* 月經記錄的切換鈕。沒標記時灰掉，標記後整顆亮起來 */
-.mc-toggle{
-  margin-left:auto; border:1px solid var(--line); background:transparent;
-  font-size:13px; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer;
-  opacity:.3; filter:grayscale(1); transition:opacity .12s ease;
+.day-panel .head .count{margin-left:auto; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3)}
+/* 月經記錄：帶標籤的一排，每個人各一顆。
+   原本只放一顆沒有文字的灰色 🩸，使用者找不到 —— 控制項要有名字。 */
+.mc-row{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  margin:0 0 12px; padding:9px 12px;
+  background:var(--surface); border-radius:var(--r-md);
 }
-.mc-toggle:hover{opacity:.6}
-.mc-toggle[aria-pressed="true"]{opacity:1; filter:none; border-color:#C1566B; background:rgba(193,86,107,.13)}
+.mc-row .mc-label{font-size:12.5px; color:var(--ink-2); white-space:nowrap}
+.mc-row .who-pick{gap:6px}
+.mc-row .who-pick button{font-size:12.5px; padding:5px 11px}
 /* 月曆格子裡的 🩸 */
 .dots .mc{font-size:9px; line-height:1}
 .events{display:flex; flex-direction:column; gap:8px; list-style:none; margin:0; padding:0}
@@ -591,8 +593,11 @@ body{
     <section class="day-panel">
       <div class="head">
         <strong id="dpDate">9月8日</strong><em id="dpWeek">週二</em>
-        <button type="button" class="mc-toggle" id="dpMC" aria-pressed="false" title="標記／取消這天的月經記錄">🩸</button>
         <span class="count" id="dpCount"></span>
+      </div>
+      <div class="mc-row">
+        <span class="mc-label">🩸 月經記錄</span>
+        <div class="who-pick" id="dpMC"></div>
       </div>
       <ul class="events" id="dpList"></ul>
     </section>
@@ -741,8 +746,8 @@ const store = {
 
 const state = {
   events: [],    // [{id, date, time, title, note, by, byId, kind, photoCount}]
-  periods:{},    // { '2026-11-20': true } 月經記錄。獨立存，不混進行程裡
-                 // —— 才不會跑進推播通知，也不會被「刪除」指令誤傷
+  periods:{},    // { '2026-11-20': ['成員id', …] } 月經記錄，分人記。
+                 // 獨立存不混進行程 —— 才不會跑進推播通知，也不會被「刪除」誤傷
   chat:   [],    // [{id, role:'me'|'peer'|'bot', name, byId, text, card?, ts}]
   photos: [],    // 只有本機模式用；雲端模式的照片是要看的時候才去查
   members:{},    // { [id]: {id, name, colorKey} }
@@ -1040,17 +1045,23 @@ async function addEvent(ev){
   else { state.events.push(ev); saveLocal(); renderAll(); }
 }
 /* ---- 月經記錄 ------------------------------------------------
-   文件 id 直接用日期（2026-11-20），所以同一天記兩次也不會重複，
-   取消就是把那份文件刪掉。 */
-async function setPeriod(date, on){
+   文件 id 是「日期_成員id」，所以同一天不同人可以各記各的，
+   同一人同一天記兩次也不會重複，取消就是把那份文件刪掉。 */
+const periodId = (date, memberId) => `${date}_${memberId}`;
+const hasPeriod = (date, memberId) => (state.periods[date] || []).includes(memberId);
+
+async function setPeriod(date, memberId, on){
   const next = { ...state.periods };
-  if(on) next[date] = true; else delete next[date];
+  const cur = new Set(next[date] || []);
+  if(on) cur.add(memberId); else cur.delete(memberId);
+  if(cur.size) next[date] = [...cur]; else delete next[date];
   state.periods = next;
   renderCal(); renderDayPanel();              // 先動畫面，不等雲端
   try{
     if(db){
-      if(on) await db.collection('periods').doc(date).set({ date, byId:state.meId, createdAt:Date.now() });
-      else   await db.collection('periods').doc(date).delete();
+      const ref = db.collection('periods').doc(periodId(date, memberId));
+      if(on) await ref.set({ date, memberId, byId:state.meId, createdAt:Date.now() });
+      else   await ref.delete();
     }else saveLocal();
   }catch(err){
     console.error('月經記錄存檔失敗', err);
@@ -1235,7 +1246,7 @@ function renderCal(){
       s === todayStr ? 'today' : '',
       s === state.sel ? 'sel' : ''].filter(Boolean).join(' ');
     // 有月經記錄就讓出一個位置給 🩸，圓點最多少放一顆免得擠成一團
-    const mc = state.periods[s] ? '<span class="mc">🩸</span>' : '';
+    const mc = (state.periods[s] || []).length ? '<span class="mc">🩸</span>' : '';
     const dots = eventsOn(s).slice(0, mc ? 2 : 3)
       .map(e => `<i style="background:${colorOf(e)}"></i>`).join('');
     html += `<button class="${cls}" data-d="${s}"><span>${d.getDate()}</span><span class="dots">${mc}${dots}</span></button>`;
@@ -1255,7 +1266,13 @@ function renderDayPanel(){
   $('#dpWeek').textContent = `週${WEEK_TXT[d.getDay()]}` + (state.sel === ymd(TODAY) ? '・今天' : '');
   const list = eventsOn(state.sel);
   $('#dpCount').textContent = list.length ? `${list.length} 筆` : '';
-  $('#dpMC').setAttribute('aria-pressed', String(!!state.periods[state.sel]));
+
+  // 月經記錄：每位成員一顆，按下去就是「這天是這個人」
+  const people = Object.values(state.members).sort((a,b) => a.name.localeCompare(b.name,'zh-Hant'));
+  $('#dpMC').innerHTML = people.length
+    ? people.map(p => `<button type="button" data-mc="${p.id}" aria-pressed="${hasPeriod(state.sel, p.id)}">
+         <i style="background:${hexOf(p.colorKey)}"></i>${esc(p.name)}</button>`).join('')
+    : '<span style="font-size:12px;color:var(--ink-3)">名冊上還沒有人</span>';
 
   $('#dpList').innerHTML = list.length ? list.map(e => {
     const c = colorOf(e);
@@ -1457,9 +1474,14 @@ async function handle(rawText){
   }
 
   if(cmd.type === 'period'){
+    // 句子裡有寫名字就記給那個人（「女友 月經來了」），沒寫就記自己
+    const pre = parsePrefix(rawText);
+    const who = (pre && pre.byId) ? pre.byId : state.meId;
+    const name = (state.members[who] || me()).name || '';
+
     let days = cmd.endDate ? spanDays(cmd.date, cmd.endDate) : 1;
     if(days > MAX_RANGE_DAYS) days = MAX_RANGE_DAYS;
-    for(let i = 0; i < days; i++) await setPeriod(shiftYmd(cmd.date, i), !cmd.off);
+    for(let i = 0; i < days; i++) await setPeriod(shiftYmd(cmd.date, i), who, !cmd.off);
 
     const first = cmd.date, last = shiftYmd(cmd.date, days - 1);
     state.sel = first;
@@ -1468,7 +1490,9 @@ async function handle(rawText){
     renderCal(); renderDayPanel();
 
     const when = days > 1 ? `${mdText(first)}–${mdText(last)}（${days} 天）` : whenText(first, '').replace('整天','');
-    return botSay(cmd.off ? `已取消 ${when} 的月經記錄。` : `🩸 已記錄 ${when}`);
+    return botSay(cmd.off
+      ? `已取消 ${name} ${when} 的月經記錄。`
+      : `🩸 已記錄 ${name} ${when}`);
   }
 
   if(cmd.type === 'delete'){
@@ -1550,11 +1574,14 @@ $('#calGrid').addEventListener('click', e => {
   if(d.getMonth() !== state.view.getMonth()) state.view = new Date(d.getFullYear(), d.getMonth(), 1);
   renderCal(); renderDayPanel();
 });
-$('#dpMC').onclick = () => {
-  const on = !state.periods[state.sel];
-  setPeriod(state.sel, on);
-  toast(on ? `🩸 已記錄 ${mdText(state.sel)}` : `已取消 ${mdText(state.sel)} 的記錄`);
-};
+$('#dpMC').addEventListener('click', e => {
+  const b = e.target.closest('button[data-mc]'); if(!b) return;
+  const who = b.dataset.mc;
+  const on  = !hasPeriod(state.sel, who);
+  const name = (state.members[who] || {}).name || '';
+  setPeriod(state.sel, who, on);
+  toast(on ? `🩸 ${name} ${mdText(state.sel)}` : `已取消 ${name} ${mdText(state.sel)} 的記錄`);
+});
 
 $('#dpList').addEventListener('click', e => {
   const del = e.target.closest('[data-del]');
@@ -1676,11 +1703,12 @@ function openSheet(firstRun){
       <h3>月經記錄 🩸</h3>
       <p>兩種方式都可以，記錄只顯示在月曆上，<strong>不會出現在推播通知裡</strong>。</p>
       <ul>
-        <li><strong>點選</strong>：在行事曆選到那天，按日期右邊的 <strong>🩸</strong> 切換</li>
+        <li><strong>點選</strong>：在行事曆選到那天，日期下面那排「🩸 月經記錄」裡<strong>按人名</strong>切換</li>
         <li><strong>打字</strong>：<code>月經來了</code>（今天）、<code>月經 11/20-24</code>、<code>經期11/20~11/24</code></li>
-        <li>取消：再按一次 🩸，或打 <code>取消月經 11/20</code></li>
+        <li><strong>記給別人</strong>：<code>女友 月經 11/20-24</code>。沒寫名字就記自己</li>
+        <li>取消：再按一次那個人，或打 <code>取消月經 11/20</code></li>
       </ul>
-      <p class="note">也認得「經期」「生理期」「小紅」「大姨媽」「mc」。記錄跟行程分開存，所以不會被「刪除」指令誤傷，也不會跑進通知。<br><br>⚠️ 這筆資料跟行程放在同一個地方，<strong>打開這個網址的人都看得到</strong>。</p>
+      <p class="note">也認得「經期」「生理期」「小紅」「大姨媽」「mc」。<strong>每個人分開記</strong>，同一天不同人可以各記各的。<br><br>記錄跟行程分開存，所以不會被「刪除」指令誤傷，也不會跑進通知。<br><br>⚠️ 這筆資料跟行程放在同一個地方，<strong>打開這個網址的人都看得到</strong>。</p>
 
       <h3>備註</h3>
       <p>打字時用 <code>//</code> 或 <code>備註:</code> 分隔，後面整段都算備註：</p>
@@ -2079,10 +2107,16 @@ function connect(conn){
     renderAll();
   }, () => {});
 
-  // 月經記錄：文件 id 就是日期
+  // 月經記錄：文件 id 是「日期_成員id」，依日期彙整成清單
   db.collection('periods').onSnapshot(snap => {
     const next = {};
-    snap.docs.forEach(d => { next[d.id] = true; });
+    snap.docs.forEach(d => {
+      const v = d.data() || {};
+      const date = v.date || String(d.id).split('_')[0];
+      const who  = v.memberId || v.byId || '';
+      if(!date) return;
+      (next[date] = next[date] || []).push(who);
+    });
     state.periods = next;
     renderCal(); renderDayPanel();
   }, () => {});
