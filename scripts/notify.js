@@ -208,7 +208,30 @@ function buildMessage(events, members, dateStr){
   });
 
   let sent = 0, gone = 0, failed = 0;
+
+  /* 太久沒被 App 刷新過的訂閱，幾乎都已經被 iOS 作廢了。
+     麻煩的是 Apple 對死掉的訂閱照樣回 201，不會回 410，
+     所以只能靠「多久沒出現」來判斷，否則會一直往黑洞送。 */
+  const STALE_DAYS = 45;
+  const cutoff = Date.now() - STALE_DAYS * 86400000;
+  const alive = [];
   for(const s of subs){
+    const seen = Number(s.lastSeen || 0);
+    if(!seen){
+      console.log(`  ⚠ ${s.label || s._id}：還沒被 App 刷新過（舊版留下的），請在手機上打開一次 App`);
+      alive.push(s);
+    }else if(seen < cutoff){
+      await deleteDoc('pushsubs', s._id);
+      gone++;
+      console.log(`  – ${s.label || s._id}：超過 ${STALE_DAYS} 天沒更新，視為失效已清除`);
+    }else{
+      const days = Math.floor((Date.now() - seen) / 86400000);
+      console.log(`  · ${s.label || s._id}：${days} 天前更新過`);
+      alive.push(s);
+    }
+  }
+
+  for(const s of alive){
     const sub = { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
     try{
       /* TTL：裝置離線時 Apple 要幫我們保留多久（預設會太短，錯過就丟掉）

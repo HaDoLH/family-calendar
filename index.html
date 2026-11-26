@@ -718,7 +718,7 @@ const VAPID_PUBLIC_KEY = 'BNMFwjnt8uM8bMhSP4KgzUOwvN6OAosgeNM8nG6OSLw5qBYJENhSpa
    大家都要重新輸入一次。App 名稱換成「行程表」時刻意保留舊前綴。 */
 const LS = {
   meId:'gunli.meId', kind:'gunli.kind', local:'gunli.local.v2',
-  family:'gunli.family', pushAsk:'gunli.pushAsk'
+  family:'gunli.family', pushAsk:'gunli.pushAsk', deviceId:'gunli.deviceId'
 };
 
 /* 瀏覽器的 localStorage 不保證存得住（無痕視窗、App 內嵌瀏覽器、清除資料都會沒），
@@ -2002,6 +2002,8 @@ function connect(conn){
     renderAll();
   }, () => {});
 
+  refreshPushSub();          // 每次連上線就把訂閱刷新，避免悄悄失效
+
   // 對話紀錄：一份文件裝一個陣列
   db.doc('chat/log').onSnapshot(snap => {
     const prev = state.chat.length;
@@ -2135,15 +2137,19 @@ async function enablePush(){
 
   const raw = sub.toJSON();
   const id = await subId(raw.endpoint);
+  let devId = store.get(LS.deviceId);
+  if(!devId){ devId = 'd' + uid(); store.set(LS.deviceId, devId); }
   const doc = {
     id,
     endpoint: raw.endpoint,
     p256dh: raw.keys.p256dh,
     auth:   raw.keys.auth,
     label:  me().name || '未命名裝置',
+    deviceId: devId,
     ua:     navigator.userAgent.slice(0, 180),
     url:    location.href,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    lastSeen:  Date.now()
   };
   if(db) await db.collection('pushsubs').doc(id).set(doc);
   return { ok:true };
@@ -2185,6 +2191,42 @@ $('#ppYes').onclick = async () => {
     toast('沒有取得通知權限');
   }else toast('這台裝置沒辦法開啟通知');
 };
+
+/* 每次打開 App 都把訂閱重新寫一次。
+   iOS 會在使用者久沒開 App 時悄悄讓推播訂閱失效，而 Apple 那端仍然回
+   HTTP 201，所以從伺服器完全看不出來 —— 記錄上會一直顯示「送出成功」，
+   實際上石沉大海。定期刷新 ＋ 記錄 lastSeen 才有辦法自我修復。 */
+async function refreshPushSub(){
+  try{
+    if(!db || !swReg) return;
+    const sub = await swReg.pushManager.getSubscription();
+    if(!sub) return;
+
+    const raw = sub.toJSON();
+    const id  = await subId(raw.endpoint);
+
+    let devId = store.get(LS.deviceId);
+    if(!devId){ devId = 'd' + uid(); store.set(LS.deviceId, devId); }
+
+    await db.collection('pushsubs').doc(id).set({
+      id, endpoint: raw.endpoint,
+      p256dh: raw.keys.p256dh, auth: raw.keys.auth,
+      label: me().name || '未命名裝置',
+      deviceId: devId,
+      ua: navigator.userAgent.slice(0, 180),
+      url: location.href,
+      createdAt: Date.now(),
+      lastSeen:  Date.now()
+    });
+
+    // 同一台裝置的舊訂閱清掉。iOS 換發訂閱時會留下一筆死的，
+    // 而那筆死的 Apple 照樣回 201，不清就會一直往黑洞送
+    const snap = await db.collection('pushsubs').where('deviceId', '==', devId).get();
+    for(const d of snap.docs){
+      if(d.id !== id) await db.collection('pushsubs').doc(d.id).delete();
+    }
+  }catch(err){ console.error('刷新訂閱失敗', err); }
+}
 
 async function disablePush(){
   if(!swReg) return;
