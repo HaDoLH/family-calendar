@@ -217,16 +217,20 @@ function buildMessage(events, members, dateStr){
   const alive = [];
   for(const s of subs){
     const seen = Number(s.lastSeen || 0);
-    if(!seen){
+    // 舊版留下的訂閱沒有 lastSeen，退而用建立時間判斷，
+    // 否則那些早就死掉的會永遠留著、永遠送不到
+    const born = Number(s.createdAt || 0);
+    const ref  = seen || born;
+    if(!ref){
       console.log(`  ⚠ ${s.label || s._id}：還沒被 App 刷新過（舊版留下的），請在手機上打開一次 App`);
       alive.push(s);
-    }else if(seen < cutoff){
+    }else if(ref < cutoff){
       await deleteDoc('pushsubs', s._id);
       gone++;
       console.log(`  – ${s.label || s._id}：超過 ${STALE_DAYS} 天沒更新，視為失效已清除`);
     }else{
-      const days = Math.floor((Date.now() - seen) / 86400000);
-      console.log(`  · ${s.label || s._id}：${days} 天前更新過`);
+      const days = Math.floor((Date.now() - ref) / 86400000);
+      console.log(`  · ${s.label || s._id}：${days} 天前${seen ? '更新過' : '建立（尚未刷新）'}`);
       alive.push(s);
     }
   }
