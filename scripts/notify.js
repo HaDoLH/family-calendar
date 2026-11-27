@@ -120,14 +120,16 @@ async function decideMode(){
   const log = await readLog();
   console.log(`台北現在 ${now.date} ${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}`);
 
-  // 早上那則：09:00 開始送；拖過 14:00 就不送了（當天過一半了），但一樣記起來免得整天重試
-  if(now.hour >= 9 && log.sentToday !== now.date){
-    if(now.hour < 14) return { mode:'today', mark:{ sentToday:now.date } };
-    console.log('早上那則已經拖過 14:00，今天不補送了');
+  /* 時段開得很寬，因為 GitHub 實際上常常一天只叫醒我們兩三次
+     （設定每 30 分鐘，實測 14 小時只跑 2 次）。窗口太窄就會整天錯過。 */
+  // 今天的行程：06:00–15:59 之間的第一次執行就送
+  if(now.hour >= 6 && log.sentToday !== now.date){
+    if(now.hour < 16) return { mode:'today', mark:{ sentToday:now.date } };
+    console.log('早上那則已經拖過 16:00，今天不補送了');
     await writeLog({ sentToday:now.date });
   }
-  // 晚上那則：21:00 開始送「明天的行程」
-  if(now.hour >= 21 && log.sentTomorrow !== now.date){
+  // 明天的行程：17:00 之後的第一次執行就送
+  if(now.hour >= 17 && log.sentTomorrow !== now.date){
     return { mode:'tomorrow', mark:{ sentTomorrow:now.date } };
   }
   return { mode:null };

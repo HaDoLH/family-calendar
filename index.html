@@ -2084,6 +2084,7 @@ async function openDetail(eventId){
    ============================================================ */
 /** 接上雲端資料庫，並開始訂閱四份資料 */
 function connect(conn){
+  let pushRefreshed = false;
   db = conn;
   state.online = true;
 
@@ -2099,6 +2100,9 @@ function connect(conn){
     snap.docs.forEach(d => { next[d.id] = { id:d.id, ...d.data() }; });
     state.members = next;
     renderAll();
+    // 名冊載好才刷新訂閱 —— 太早跑的話 me() 還查不到自己，
+    // 標籤會被寫成「尚未選擇」，之後看 log 就分不出哪台是誰
+    if(!pushRefreshed){ pushRefreshed = true; refreshPushSub(); }
   }, () => {});
 
   // 全家共用設定（目前只有共同行程的顏色）
@@ -2120,8 +2124,7 @@ function connect(conn){
     state.periods = next;
     renderCal(); renderDayPanel();
   }, () => {});
-
-  refreshPushSub();          // 每次連上線就把訂閱刷新，避免悄悄失效
+
 
   // 對話紀錄：一份文件裝一個陣列
   db.doc('chat/log').onSnapshot(snap => {
@@ -2264,6 +2267,7 @@ async function enablePush(){
     p256dh: raw.keys.p256dh,
     auth:   raw.keys.auth,
     label:  me().name || '未命名裝置',
+    memberId: state.meId,
     deviceId: devId,
     ua:     navigator.userAgent.slice(0, 180),
     url:    location.href,
@@ -2331,6 +2335,7 @@ async function refreshPushSub(){
       id, endpoint: raw.endpoint,
       p256dh: raw.keys.p256dh, auth: raw.keys.auth,
       label: me().name || '未命名裝置',
+      memberId: state.meId,
       deviceId: devId,
       ua: navigator.userAgent.slice(0, 180),
       url: location.href,
